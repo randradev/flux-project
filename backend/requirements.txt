@@ -1,0 +1,36 @@
+# Web Framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+# Environment & Config
+python-dotenv==1.0.1
+pydantic-settings==2.4.0
+
+# LangGraph & LangChain
+langgraph==0.2.39
+langchain-core==0.3.15
+
+# Google Cloud / Vertex AI
+langchain-google-vertexai==2.0.4
+google-cloud-aiplatform==1.70.0
+
+# Supabase
+supabase==2.7.4
+
+# LangGraph Persistence (PostgreSQL Checkpointer)
+langgraph-checkpoint-postgres==2.0.2
+psycopg[binary,pool]==3.2.1
+
+# Document Generation (Dev 3 dependency - declarada aquí para coherencia de entorno)
+reportlab==4.2.2
+
+# Data Handling
+pandas==2.2.3
+
+# Testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+httpx==0.27.2
+
+# HTTP Client (para eco_service)
+httpx==0.27.2
