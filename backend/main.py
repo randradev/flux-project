@@ -14,6 +14,12 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import sys
+import asyncio
+# Parche de compatibilidad para Windows (PSYCZOPG + Asyncio)
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from app.config import settings
 
 
@@ -38,11 +44,10 @@ app.add_middleware(
 
 
 # ── Routers ───────────────────────────────────────────────────
-# Se registrarán aquí en los Pasos 5 y 6. Por ahora se dejan comentados
-# para que el servidor levante limpiamente en este paso.
-# from app.api.v1 import chat, docs
-# app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
-# app.include_router(docs.router, prefix="/api/v1", tags=["docs"])
+from app.api.v1 import chat, docs
+
+app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
+app.include_router(docs.router, prefix="/api/v1", tags=["docs"])
 
 
 # ── Endpoints Base ────────────────────────────────────────────

@@ -39,6 +39,7 @@ Objetivo: Que el sistema "lata" y el frontend quede ordenado.
         - Separar el archivo único en carpetas: /components (Chat, UI), /hooks (Lógica de estado), /services (Llamadas API).
         - Borrar mockdata.
         - Configurar un Global State (Context API o Zustand) para manejar los datos del usuario que llegan desde el backend.
+        - Agregar opción de borrar conversaciones previas en el historial.
     - **Implementación de la Capa de Servicio:**
         - Crear services/api.ts para gestionar las peticiones POST al endpoint de chat.
         - Implementar la lógica para leer Streaming del LLM (manejo de Reader en el fetch).
