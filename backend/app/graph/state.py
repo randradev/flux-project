@@ -74,6 +74,7 @@ class FluxState(TypedDict):
     # ── Datos Recolectados (escritura: nodos de extracción) ──
     # Estructura flexible: cada producto agrega sus llaves sin conflicto.
     # Ejemplo LOAN: {"renta": 1500000, "antiguedad": 12, "nivel_estudios": "UNIVERSITARIO"}
+    # Ejemplo ACCOUNT: {"renta": 1000000, "antiguedad": 6, "nivel_estudios": "TECNICO"}
     # Ejemplo DAP:  {"monto_inversion": 5000000, "moneda": "CLP", "plazo_dias": 180}
     collected_data: dict
 

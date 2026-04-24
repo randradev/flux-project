@@ -40,13 +40,14 @@ Objetivo: Que el sistema "lata" y el frontend quede ordenado.
         - Borrar mockdata.
         - Configurar un Global State (Context API o Zustand) para manejar los datos del usuario que llegan desde el backend.
         - Agregar opción de borrar conversaciones previas en el historial.
+        - Agregar pantalla de registro
     - **Implementación de la Capa de Servicio:**
-        - Crear services/api.ts para gestionar las peticiones POST al endpoint de chat.
+        - Crear services/api.js para gestionar las peticiones POST al endpoint de chat.
         - Implementar la lógica para leer Streaming del LLM (manejo de Reader en el fetch).
     - **Capa de Autenticación y Persistencia de UI:**
-        - **Implementación de Login/Signup:** Adaptar los formularios de acceso para utilizar el SDK de Supabase Auth y proteger las rutas del chat. Dió la impresión, además, de que no había pantalla de registro, solo de login. De ser así, crearla y aplicar la implementación propuesta.
-        - **Garantizar consumo de API de Componente Sidebar de Historial:** Adaptar el panel lateral existente al endpoint /history, permitiendo al usuario navegar entre sus conversaciones previas.
-        - **Sincronización de Sesión:** Asegurar que el useFluxGraph envíe el token de autenticación en las cabeceras de cada mensaje y maneje la recuperación de la burbuja de chat al cargar una sesión antigua.
+        - Implementación de Login/Signup: Adaptar los formularios de acceso para utilizar el SDK de Supabase Auth y proteger las rutas del chat. Dió la impresión, además, de que no había pantalla de registro, solo de login. De ser así, crearla y aplicar la implementación propuesta.
+        - Garantizar consumo de API de Componente Sidebar de Historial: Adaptar el panel lateral existente al endpoint /history, permitiendo al usuario navegar entre sus conversaciones previas.
+        - Sincronización de Sesión: Asegurar que el useFluxGraph envíe el token de autenticación en las cabeceras de cada mensaje y maneje la recuperación de la burbuja de chat al cargar una sesión antigua.
     
 - Entregable Clave:
     - Frontend modularizado y limpio, capaz de enviar mensajes al backend y mostrar visualmente en qué "Nodo" está el proceso, aunque la respuesta sea solo un saludo.
@@ -177,7 +178,7 @@ Objetivo: Reutilizar lo hecho para Cuenta/DAP y pulir errores.
 2. Mocks de Interfaz y Desarrollo Paralelo:
     - Evitar a toda costa el bloque por dependencias.
     - Regla: Si una función externa (Ej: risk_engine o pdf_factory) no está lista, se debe implementar una versión "Mock" (datos estáticos) en el nodo para que el Dev 2 (Frontend) pueda seguir trabajando en la UI sin esperar al código final.
-3. 3. Sincronía vía DB (Estados de Verdad):
+3. Sincronía vía DB (Estados de Verdad):
     - La comunicación entre el Grafo (Dev 1), la UI (Dev 2) y los módulos de Seguridad/Fulfillment (Dev 3) se rige exclusivamente por la tabla `financial_applications`.
     - Regla de Escritura (Backend): Cada nodo de servicio debe actualizar obligatoriamente:
         - `current_step_id`: Con el ID del nodo actual para posicionar el GPS del frontend.
@@ -192,6 +193,6 @@ Objetivo: Reutilizar lo hecho para Cuenta/DAP y pulir errores.
     - Docstring(''' docstring'''): Cada Nodo de LangGraph y cada módulo de lógica, cada función, componente del frontend, etc, debe tener un Docstring inicial explicando: Entrada (State), Proceso (Lógica de Negocio) y Salida (Campos del State que modifica).
     - Comentarios ( # ): Para explicar lineas de código que puedan ser complejas de entender a simple vista.
 5. Protocolo de Git: Ramas y Commits:
-    - Nomenclatura de Ramas: Se usará el formato tipo/descripcion-corta (Ej: feat/loan-nodes, fix/pdf-margin, refactor/fe-modularization).
+    - Nomenclatura de Ramas: Se usará el formato tipo/faseX-devX/descripcion-corta (Ej: feat/fase1-dev2/modularizacion-frontend, fix/fase3-dev3/generacion-reportes, etc).
     - Commits Atómicos: Los mensajes de commit deben empezar con un verbo en infinitivo y ser descriptivos (Ej: feat: implementar lógica de hashing en pdf_factory).
     - Merge Policy: Solo se integra a la rama main mediante Pull Requests revisados, asegurando que el servidor de FastAPI levante sin errores.
