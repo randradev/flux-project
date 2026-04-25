@@ -11,47 +11,65 @@ Fase 3 agregará aquí: KNOWLEDGE_BASE_RAG, AMBIGUITY_HANDLER,
 SERVICE_ERROR_HANDLER, SECURITY_WATCHDOG, GLOBAL_END, RESUME_HANDLER.
 """
 
+from datetime import date
 from langchain_core.messages import AIMessage, SystemMessage
 from app.graph.state import FluxState
 from app.infra.supabase import get_user_by_email, update_conversation_node
 from app.infra.gemini_client import get_chat_model
+from app.infra.supabase import update_application_semaphores
 
 
-# ── WELCOME_NODE ──────────────────────────────────────────────
+def _calculate_age(birth_date_str: str) -> int:
+    """
+    Calcula la edad en años completos a partir de una fecha ISO8601.
+
+    INPUT:  birth_date_str — string ISO8601 (ej: "1990-05-15")
+    OUTPUT: edad en años completos (int)
+    EDGE CASE: Si el cumpleaños es hoy, ya cumplió → se cuenta el año.
+    """
+    birth = date.fromisoformat(birth_date_str)
+    today = date.today()
+    return today.year - birth.year - (
+        (today.month, today.day) < (birth.month, birth.day)
+    )
+
 
 def welcome_node(state: FluxState) -> dict:
     """
-    Nodo de bienvenida y carga de perfil de usuario.
+    Nodo de bienvenida, carga de perfil y preparación de datos universales.
 
     INPUT (State):
-        - state["session"]["conversation_id"]: UUID de la conversación activa.
-        - state["user_data"]["email"]: Email del usuario autenticado.
-        - state["messages"]: Historial de mensajes (puede estar vacío en sesión nueva
-          o contener historial en sesión reanudada).
+        - state["user_data"]: Perfil RAW del usuario desde DB.
+        - state["session"]: Metadatos de sesión.
+        - state["messages"]: Historial (vacío=nueva sesión, con contenido=reanudada).
 
     PROCESO:
-        1. Verifica si es una sesión nueva o reanudada basándose en
-           la presencia de mensajes previos en el historial.
-        2. Si es nueva: saluda al usuario por su nombre.
-        3. Si es reanudada: genera un saludo de continuación referenciando
-           el punto donde se abandonó la sesión (previous_node).
-        4. Actualiza el `current_node` en la DB (GPS del frontend).
+        1. Detecta si es sesión nueva o reanudada.
+        2. Calcula edad a partir de birth_date (centralizado aquí para toda la app).
+        3. Genera mensaje de bienvenida personalizado.
+        4. Actualiza GPS en Supabase.
+        5. Escribe preparation_data con datos procesados.
 
     OUTPUT (campos del State que modifica):
-        - messages: Agrega el mensaje de bienvenida del asistente.
-        - session["current_node"]: Actualizado a "WELCOME_NODE".
+        - messages: Agrega mensaje de bienvenida.
+        - session["current_node"]: "WELCOME_NODE".
+        - preparation_data: {nombre, rut, mail, edad}.
     """
     user = state.get("user_data", {})
     session = state.get("session", {})
     messages = state.get("messages", [])
+
     full_name = user.get("full_name", "")
     first_name = full_name.split()[0] if full_name else "amig@"
 
-    # Determinar si es sesión nueva o reanudada
+    # Calcular edad (responsabilidad centralizada en este nodo desde v2.0)
+    birth_date_str = user.get("birth_date")
+    edad = _calculate_age(birth_date_str) if birth_date_str else 0
+
+    # Detectar si es sesión nueva o reanudada
     is_resumed = len(messages) > 0 and session.get("previous_node") is not None
 
     if is_resumed:
-        previous_node = session.get("previous_node", "")
         welcome_text = (
             f"¡Hola de nuevo, {first_name}! 👋 Veo que nos habíamos quedado a mitad del camino. "
             f"No te preocupes, tu progreso está guardado. ¿Continuamos donde lo dejamos?"
@@ -69,9 +87,26 @@ def welcome_node(state: FluxState) -> dict:
     if conversation_id:
         update_conversation_node(conversation_id, "WELCOME_NODE")
 
+    # ── Actualizar semáforo del inicio ──
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id,
+            current_node_id="WELCOME_NODE",
+            node_status="SUCCESS",
+            engine_status="PENDING"
+        )
+
     return {
         "messages": [AIMessage(content=welcome_text)],
         "session": {**session, "current_node": "WELCOME_NODE"},
+        # ── NUEVO en v2.0: preparation_data ──────────────────────
+        "preparation_data": {
+            "nombre": full_name,
+            "rut": user.get("rut", ""),
+            "mail": user.get("email", ""),
+            "edad": edad,
+        },
     }
 
 
