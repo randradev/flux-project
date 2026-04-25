@@ -15,6 +15,8 @@ CAMBIOS vs v1.0:
   - Agregado: evaluation_results (outputs de motores financieros)
   - Agregado: offer_data (datos de oferta, formalización y contrato)
   - Agregado: auth_control (lógica de OTP y seguridad transversal)
+  - Agregado: flow_result (estado de cierre del flujo para auditoría)
+  - Agregado: FinalDisplay (datos tipados para renderizado del Frontend)
 """
 
 from typing import TypedDict, Annotated, Literal

@@ -51,7 +51,7 @@ def loan_entry_node(state: FluxState) -> dict:
         update_application_semaphores(
             application_id=application_id,
             current_node_id="LOAN_INIT", # Cambia según el nodo
-            node_status="IN_PROGRESS",       # Avisamos que el INIT terminó
+            node_status="SUCCESS",       # Avisamos que el INIT terminó
             engine_status="PENDING"      # El motor de producto aún no arranca
         )
 

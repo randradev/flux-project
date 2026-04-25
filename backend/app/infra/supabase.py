@@ -182,10 +182,10 @@ def update_application_semaphores(
     """
     # 1. Construir el diccionario de actualización dinámicamente
     update_data = {}
-    if current_node_id: update_data["current_node_id"] = current_node_id
-    if node_status: update_data["node_status"] = node_status
-    if engine_status: update_data["engine_status"] = engine_status
-    if document_status: update_data["document_status"] = document_status
+    if current_node_id is not None: update_data["current_node_id"] = current_node_id
+    if node_status is not None: update_data["node_status"] = node_status
+    if engine_status is not None: update_data["engine_status"] = engine_status
+    if document_status is not None: update_data["document_status"] = document_status
 
     # 2. Si no hay datos, no hacemos nada
     if not update_data:
