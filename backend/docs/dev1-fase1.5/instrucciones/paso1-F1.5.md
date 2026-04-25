@@ -1,0 +1,408 @@
+## PASO 1 — Nuevo `state.py` {#paso-1}
+
+### Contexto de la Decisión
+
+El `collected_data: dict` actual es un contenedor plano sin tipado. Si LOAN y ACCOUNT tienen ambos un campo `renta`, existe riesgo de sobreescritura silenciosa. Adicionalmente, `control_flags` mezcla lógica de OTP con errores de servicio.
+
+La nueva arquitectura introduce **5 namespaces TypedDict**, todos con `total=False` (campos opcionales) para que LangGraph pueda hacer merge parcial sin exigir que todos los campos estén presentes en cada retorno de nodo.
+
+### 1.1 Sub-paso: Diseño de los TypedDicts
+
+**Decisión técnica clave:** Todos los sub-TypedDicts usan `total=False`. Esto permite que un nodo retorne solo las claves que modificó (`return {"collecting_data": {"loan_profile": {"renta": 1500000}}}`) sin necesidad de conocer ni repoblar los demás campos.
+
+**Verificación al terminar este sub-paso:**
+- [ ] Confirmar que cada campo está nombrado exactamente igual que en los archivos `.md` (sensible a mayúsculas/minúsculas).
+- [ ] Confirmar que no hay campo que aparezca en dos sub-TypedDicts distintos con distinto tipo (ej: `renta` es `int` en loan y account — correcto, son namespaces distintos).
+
+### 1.2 Sub-paso: Código Completo de `state.py`
+
+```python
+"""
+app/graph/state.py
+─────────────────────────────────────────────────────────────
+Definición del Estado Global del Grafo (The Single Source of Truth).
+
+REGLA DE ORO #1: Este archivo es la única fuente de verdad del sistema.
+Ningún desarrollador puede modificarlo sin aprobación del Dev 1 (Orchestrator).
+
+VERSIÓN: 2.0 — Arquitectura de Namespaces (Fase 2)
+CAMBIOS vs v1.0:
+  - Eliminado: collected_data (dict plano)
+  - Eliminado: control_flags (dict plano)
+  - Agregado: preparation_data (datos universales de DB, procesados)
+  - Agregado: collecting_data (extracción del chat, segmentado por producto)
+  - Agregado: evaluation_results (outputs de motores financieros)
+  - Agregado: offer_data (datos de oferta, formalización y contrato)
+  - Agregado: auth_control (lógica de OTP y seguridad transversal)
+"""
+
+from typing import TypedDict, Annotated, Literal
+from langgraph.graph.message import add_messages
+
+
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE A: user_data
+# Sin cambios vs v1.0. Contiene el perfil RAW de la DB.
+# Escritura reservada a: WELCOME_NODE (una sola vez por sesión).
+# ══════════════════════════════════════════════════════════════
+
+class UserData(TypedDict, total=False):
+    """
+    Datos crudos del usuario cargados desde la DB al iniciar el grafo.
+    Inmutables durante la sesión. Solo WELCOME_NODE los escribe.
+    """
+    user_id: str
+    full_name: str
+    email: str
+    rut: str
+    birth_date: str       # ISO8601. WELCOME_NODE calcula edad a partir de esto.
+    user_status: str      # ACTIVE | BLOCKED_SECURITY | PROSPECT
+    user_category: str | None  # START | MEDIUM | ADVANCE | None
+
+
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE B: session
+# Sin cambios vs v1.0. GPS del grafo y metadatos de conversación.
+# ══════════════════════════════════════════════════════════════
+
+class SessionData(TypedDict, total=False):
+    """
+    Metadatos de la sesión conversacional activa.
+    """
+    conversation_id: str
+    application_id: str | None
+    product_intent: str | None   # LOAN | ACCOUNT | DAP | GENERAL
+    current_node: str
+    previous_node: str | None
+    is_transversal_active: bool
+
+
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE C: preparation_data  [NUEVO en v2.0]
+# Datos "cocinados" para consumo inmediato de los nodos de producto.
+# WELCOME_NODE los calcula/copia desde user_data.
+# Son inmutables post-WELCOME; ningún nodo de producto los modifica.
+# ══════════════════════════════════════════════════════════════
+
+class PreparationData(TypedDict, total=False):
+    """
+    Datos universales listos para consumo de los nodos de producto.
+    WELCOME_NODE los escribe una vez al inicio de cada sesión.
+
+    Diferencia con user_data:
+      - user_data.full_name  →  preparation_data.nombre (primer nombre + apellido, formateado)
+      - user_data.email      →  preparation_data.mail
+      - user_data.birth_date →  preparation_data.edad (int calculado en WELCOME_NODE)
+    """
+    nombre: str   # Nombre completo para mensajes personalizados
+    rut: str      # RUT sin puntos, con guión
+    mail: str     # Correo para OTP y notificaciones
+    edad: int     # Edad en años completos (calculada en WELCOME_NODE)
+
+
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE D: collecting_data  [NUEVO en v2.0]
+# Extracción de entidades del chat. Sub-cajones por producto.
+# Escritura: nodos COLLECTING de cada producto.
+# ══════════════════════════════════════════════════════════════
+
+class LoanProfile(TypedDict, total=False):
+    """Datos de perfil recolectados en LOAN_COLLECTING_PROFILE."""
+    renta: int              # Renta líquida en CLP
+    antiguedad_laboral: int # Meses de antigüedad laboral
+    nivel_estudios: str     # POSTGRADO | UNIVERSITARIO | TECNICO | MEDIA
+
+
+class LoanSim(TypedDict, total=False):
+    """Parámetros de simulación recolectados en LOAN_COLLECTING_SIMULATION."""
+    monto_solicitado: int   # Monto del crédito en CLP
+    plazo_solicitado: int   # Número de cuotas (meses)
+
+
+class AccountProfile(TypedDict, total=False):
+    """Datos de perfil recolectados en ACCOUNT_COLLECTING_PROFILE."""
+    renta: int              # Renta líquida en CLP
+    antiguedad_laboral: int # Meses de antigüedad laboral
+    nivel_estudios: str     # POSTGRADO | UNIVERSITARIO | TECNICO | MEDIA
+
+
+class DapParams(TypedDict, total=False):
+    """Parámetros de inversión recolectados en DAP_COLLECT_DATA."""
+    monto: float            # Monto a invertir (en la moneda indicada)
+    moneda: str             # CLP | UF | USD
+    plazo: int              # Días: 7 | 14 | 30 | 180 | 360
+
+
+class CollectingData(TypedDict, total=False):
+    """
+    Contenedor raíz de datos recolectados del chat.
+    Cada sub-cajón es independiente; un producto NUNCA toca el cajón de otro.
+
+    Convención de limpieza (reset):
+      Cada nodo INIT debe resetear su sub-cajón asignando un dict vacío.
+      Ejemplo en LOAN_INIT:
+        return {"collecting_data": {"loan_profile": {}, "loan_sim": {}}}
+    """
+    loan_profile: LoanProfile
+    loan_sim: LoanSim
+    account_profile: AccountProfile
+    dap_params: DapParams
+
+
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE E: evaluation_results  [NUEVO en v2.0]
+# Outputs crudos de los motores financieros (caja negra).
+# Escritura: nodos ENGINE de cada producto.
+# ══════════════════════════════════════════════════════════════
+
+class LoanEngineResult(TypedDict, total=False):
+    """Resultado del motor LOAN_RISK_ENGINE."""
+    status_proceso: str          # PRE_APPROVED | REJECTED_POLICY | ERROR_TECHNICAL
+    scoring_puntos: int          # 0-100
+    nivel_riesgo: str            # Bajo | Medio | Alto
+    tasa_interes_mensual: float  # 0.012 | 0.020 | 0.035
+    cuota_mensual: int           # Cuota mensual redondeada al entero superior
+    cuota_maxima_permitida: int  # renta * 0.30
+    capacidad_pago_valida: bool  # True si cuota_mensual <= renta * 0.30
+    ctc: int                     # Costo Total del Crédito (cuota * plazo)
+    total_intereses: int         # ctc - monto_solicitado
+    cae: float                   # Carga Anual Equivalente (decimal)
+    monto_aprobado: int          # Monto final aprobado por el banco
+    plazo_aprobado: int          # Cuotas aprobadas
+    motivo_rechazo: str | None   # ERR_EDAD | ERR_RENTA | ERR_ANTIGUEDAD |
+                                 # ERR_SCORING | ERR_CAPACIDAD_PAGO | None
+
+
+class AccountEngineResult(TypedDict, total=False):
+    """Resultado del motor ACCOUNT_EVALUATION_ENGINE."""
+    status_proceso: str          # PRE_APPROVED | REJECTED_POLICY | ERROR_TECHNICAL
+    is_elegible: bool            # edad >= 18, renta >= 500k, antiguedad >= 6m
+    base_category: str           # START | MEDIUM | ADVANCE (solo por tramo de renta)
+    final_category: str          # START | MEDIUM | ADVANCE (tras upgrade por estudios)
+    has_upgrade: bool            # True si obtuvo categoría superior por título
+    credit_line_amount: int      # Monto de línea de crédito ($0 si START o ant<12m)
+    monthly_cost: int            # Costo de mantención ($0 según Promo MVP)
+    motivo_rechazo: str | None   # ERR_EDAD | ERR_RENTA | ERR_ANTIGUEDAD | None
+
+
+class DapEngineResult(TypedDict, total=False):
+    """Resultado del motor DAP_INVESTMENT_ENGINE."""
+    status_proceso: str          # PRE_APPROVED | REJECTED_POLICY | ERROR_TECHNICAL
+    is_elegible: bool            # edad >= 18 y monto CLP entre $50k y $50M
+    conversion_rate_used: float  # Valor USD/UF del día. 1.0 si es CLP.
+    ipc_applied: float           # Delta IPC (solo si moneda=CLP, sino 0.0)
+    term_premium: float          # Premio por plazo: (plazo // 30) * 0.05
+    monthly_rate_total: float    # i_base + term_premium + ipc_applied
+    period_rate: float           # monthly_rate_total * (plazo / 30)
+    estimated_gain: float        # Ganancia proyectada en moneda original
+    total_return: float          # monto + estimated_gain
+    motivo_rechazo: str | None   # ERR_EDAD | ERR_MONTO_MIN | ERR_MONTO_MAX | None
+
+
+class EvaluationResults(TypedDict, total=False):
+    """
+    Contenedor raíz de resultados de motores financieros.
+    Cada sub-cajón es la caja negra de un motor específico.
+    """
+    loan_engine: LoanEngineResult
+    account_engine: AccountEngineResult
+    dap_engine: DapEngineResult
+
+
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE F: offer_data  [NUEVO en v2.0]
+# "Foto" de la oferta aceptada + datos de formalización.
+# Escritura: nodos PRE_APPROVED y FORMALIZATION de cada producto.
+# ══════════════════════════════════════════════════════════════
+
+class LoanOfferData(TypedDict, total=False):
+    """Datos de oferta y formalización del crédito de consumo."""
+    pre_approval_status: str     # ACCEPTED | REJECTED
+    timestamp_acceptance: str    # ISO8601 datetime del momento de aceptación
+    file_contrato_path: str      # Ruta/URL del PDF generado con ReportLab
+    hash_sha256: str             # Hash SHA-256 del contrato
+    contract_status: str         # SIGNED_AND_STAMPED | GENERATION_FAILED
+
+
+class AccountOfferData(TypedDict, total=False):
+    """Datos de oferta y formalización de la cuenta corriente."""
+    pre_approval_status: str
+    timestamp_acceptance: str
+    file_contrato_path: str
+    hash_sha256: str
+    contract_status: str
+
+
+class DapOfferData(TypedDict, total=False):
+    """Datos de oferta y formalización del depósito a plazo."""
+    pre_approval_status: str
+    timestamp_acceptance: str
+    file_contrato_path: str
+    hash_sha256: str
+    contract_status: str
+
+
+class OfferData(TypedDict, total=False):
+    """
+    Contenedor raíz de datos de oferta por producto.
+    Almacena la foto definitiva de la oferta aceptada y el contrato.
+    """
+    loan: LoanOfferData
+    account: AccountOfferData
+    dap: DapOfferData
+
+
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE G: auth_control  [NUEVO en v2.0 — reemplaza control_flags]
+# Lógica de OTP y bloqueos de seguridad transversal.
+# Escritura: nodos OTP_VALIDATION y SECURITY_WATCHDOG.
+# ══════════════════════════════════════════════════════════════
+
+class AuthControl(TypedDict, total=False):
+    """
+    Control de autenticación y seguridad transversal.
+    Reemplaza el control_flags genérico de v1.0.
+
+    Notas de diseño:
+      - otp_generated y otp_user_input se limpian tras validación exitosa.
+      - block_timestamp se setea en ISO8601 para compatibilidad con Supabase.
+      - security_blocked = True es un flag terminal: el grafo debe terminar.
+    """
+    security_blocked: bool       # True si SECURITY_WATCHDOG bloqueó el flujo
+    service_error: bool          # True si un servicio externo falló
+    otp_attempts: int            # Contador de intentos OTP (0–3)
+    otp_generated: str           # Código OTP generado por el sistema (6 dígitos)
+    otp_user_input: str          # Último código ingresado por el usuario
+    last_otp_input: str          # Copia del último código erróneo (para auditoría)
+    block_timestamp: str | None  # ISO8601 del momento de bloqueo
+    error_detail: str | None     # Descripción técnica para logging
+
+
+# ══════════════════════════════════════════════════════════════
+# RAÍZ: FluxState
+# ══════════════════════════════════════════════════════════════
+
+class FluxState(TypedDict):
+    """
+    Estado global del Grafo FLUX — v2.0 (Arquitectura de Namespaces).
+
+    El TypedDict raíz que LangGraph serializa y persiste en el
+    checkpointer de Supabase después de cada transición de nodo.
+
+    ESTRUCTURA DE NAMESPACES:
+    ┌──────────────────────────────────────────────────────────┐
+    │ messages          │ Historial de mensajes (reducer acum.)│
+    │ user_data         │ Perfil RAW de la DB (inmutable)      │
+    │ session           │ GPS del grafo + metadatos de sesión  │
+    │ preparation_data  │ Datos "cocinados" para nodos          │
+    │ collecting_data   │ Extracción del chat (por producto)   │
+    │ evaluation_results│ Outputs de motores financieros       │
+    │ offer_data        │ Oferta aceptada + contrato           │
+    │ auth_control      │ OTP, bloqueos y errores de servicio  │
+    └──────────────────────────────────────────────────────────┘
+
+    GUARDRAILS INMUTABLES:
+    - messages usa add_messages como reducer (no reemplazable).
+    - user_data solo es escrito por WELCOME_NODE.
+    - preparation_data solo es escrito por WELCOME_NODE.
+    - La llave session["product_intent"] es el GPS de edges.py.
+    """
+
+    # ── Mensajes (reducer acumulativo) ───────────────────────────
+    messages: Annotated[list, add_messages]
+
+    # ── Datos RAW de DB (escritura única: WELCOME_NODE) ──────────
+    user_data: UserData
+
+    # ── GPS y Metadatos de Sesión ─────────────────────────────────
+    session: SessionData
+
+    # ── Datos "Cocinados" de DB (escritura única: WELCOME_NODE) ──
+    preparation_data: PreparationData
+
+    # ── Recolección del Chat (por producto) ───────────────────────
+    collecting_data: CollectingData
+
+    # ── Resultados de Motores Financieros ─────────────────────────
+    evaluation_results: EvaluationResults
+
+    # ── Foto de Oferta y Contrato ─────────────────────────────────
+    offer_data: OfferData
+
+    # ── Control de Autenticación y Seguridad ──────────────────────
+    auth_control: AuthControl
+```
+
+### 1.3 Sub-paso: Verificación Post-Escritura
+
+**Checklist de verificación manual:**
+- [ ] Ejecutar `python -c "from app.graph.state import FluxState; print('OK')"` — debe pasar sin errores.
+- [ ] Verificar que `PreparationData` tiene exactamente: `nombre`, `rut`, `mail`, `edad` (alineado con los 3 archivos `.md`).
+- [ ] Verificar que `LoanProfile` tiene `antiguedad_laboral` (no `antiguedad` a secas — los `.md` usan el nombre largo).
+- [ ] Verificar que `DapParams.plazo` es `int` (el `.md` indica que debe transformarse el mensaje del usuario a int).
+- [ ] Verificar que `DapEngineResult` tiene `conversion_rate_used`, `ipc_applied`, `term_premium`, `monthly_rate_total`, `period_rate`, `estimated_gain`, `total_return` — todos los outputs del motor DAP.
+
+### 1.4 Pruebas del Paso 1
+
+```python
+# tests/test_state_v2.py
+"""
+Pruebas unitarias del nuevo state.py.
+Estas pruebas no requieren LangGraph activo; solo validan los TypedDicts.
+"""
+import pytest
+from datetime import datetime
+
+def test_flux_state_keys():
+    """Verifica que FluxState tiene exactamente los 8 namespaces esperados."""
+    from app.graph.state import FluxState
+    expected_keys = {
+        "messages", "user_data", "session", "preparation_data",
+        "collecting_data", "evaluation_results", "offer_data", "auth_control"
+    }
+    assert set(FluxState.__annotations__.keys()) == expected_keys
+
+def test_preparation_data_fields():
+    """Verifica los campos exactos de PreparationData."""
+    from app.graph.state import PreparationData
+    assert set(PreparationData.__annotations__.keys()) == {"nombre", "rut", "mail", "edad"}
+
+def test_collecting_data_no_collision():
+    """Verifica que loan_profile y account_profile son tipos distintos (no el mismo objeto)."""
+    from app.graph.state import CollectingData, LoanProfile, AccountProfile
+    assert CollectingData.__annotations__["loan_profile"] is LoanProfile
+    assert CollectingData.__annotations__["account_profile"] is AccountProfile
+    assert LoanProfile is not AccountProfile
+
+def test_loan_profile_field_names():
+    """Verifica nomenclatura exacta según credito-datos.md."""
+    from app.graph.state import LoanProfile
+    assert "antiguedad_laboral" in LoanProfile.__annotations__
+    assert "nivel_estudios" in LoanProfile.__annotations__
+
+def test_dap_params_plazo_is_int():
+    """El .md especifica que plazo debe transformarse a int."""
+    from app.graph.state import DapParams
+    assert DapParams.__annotations__["plazo"] is int
+
+def test_dap_engine_has_all_outputs():
+    """Verifica todos los outputs del DAP_INVESTMENT_ENGINE."""
+    from app.graph.state import DapEngineResult
+    required = {
+        "status_proceso", "is_elegible", "conversion_rate_used", "ipc_applied",
+        "term_premium", "monthly_rate_total", "period_rate",
+        "estimated_gain", "total_return", "motivo_rechazo"
+    }
+    assert required.issubset(set(DapEngineResult.__annotations__.keys()))
+
+def test_auth_control_replaces_control_flags():
+    """Verifica que FluxState no tiene el antiguo control_flags."""
+    from app.graph.state import FluxState
+    assert "control_flags" not in FluxState.__annotations__
+    assert "auth_control" in FluxState.__annotations__
+```
+
+**Documentación del Paso 1:**
+> Se reemplazó el `state.py` v1.0 (2 namespaces planos: `collected_data`, `control_flags`) por el `state.py` v2.0 con 8 namespaces tipados. Decisión técnica: todos los sub-TypedDicts usan `total=False` para permitir retornos parciales de nodos sin romper la serialización de LangGraph. Se mantuvieron `messages` (con `add_messages`), `user_data` y `session` sin cambios estructurales para preservar la compatibilidad con el checkpointer y `edges.py`.
+
+---

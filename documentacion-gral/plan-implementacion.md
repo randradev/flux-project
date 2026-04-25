@@ -47,8 +47,7 @@ Objetivo: Que el sistema "lata" y el frontend quede ordenado.
     - **Capa de Autenticación y Persistencia de UI:**
         - Implementación de Login/Signup: Adaptar los formularios de acceso para utilizar el SDK de Supabase Auth y proteger las rutas del chat. Dió la impresión, además, de que no había pantalla de registro, solo de login. De ser así, crearla y aplicar la implementación propuesta.
         - Garantizar consumo de API de Componente Sidebar de Historial: Adaptar el panel lateral existente al endpoint /history, permitiendo al usuario navegar entre sus conversaciones previas.
-        - Sincronización de Sesión: Asegurar que el useFluxGraph envíe el token de autenticación en las cabeceras de cada mensaje y maneje la recuperación de la burbuja de chat al cargar una sesión antigua.
-    
+        - Sincronización de Sesión: Asegurar que el useFluxGraph envíe el token de autenticación en las cabeceras de cada mensaje y maneje la recuperación de la burbuja de chat al cargar una sesión antigua.   
 - Entregable Clave:
     - Frontend modularizado y limpio, capaz de enviar mensajes al backend y mostrar visualmente en qué "Nodo" está el proceso, aunque la respuesta sea solo un saludo.
 ### Dev 3 (Secure):

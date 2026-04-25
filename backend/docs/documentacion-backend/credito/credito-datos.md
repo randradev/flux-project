@@ -21,6 +21,18 @@ Nodo inicial, disparador por el frontend al hacer clic en la opción de solicitu
     - Descripción: Correo electrónico del usuario
     - Origen: DB (registro de usuario)
 
+**Nota de Arquitectura:** Este nodo ya no realiza la consulta primaria a la base de datos (DB). Dicha gestión fue centralizada en WELCOME_NODE para optimizar el rendimiento y asegurar que la data esté disponible antes de la segmentación por producto.
+
+**Datos Pre-cargados (Provenientes de preparation_data):**
+- nombre, rut, mail, edad (calculada dinámicamente en WELCOME_NODE).
+
+**Nueva Responsabilidad del Nodo (Fase 2):**
+- Reset de Contexto: Limpiar el namespace correspondiente en collecting_data para asegurar que el usuario inicie con parámetros limpios si ya tuvo intentos previos.
+- Handshake de Producto: Validar que el product_intent en la sesión coincida con el flujo iniciado.
+- Transición: Actuar como el punto de entrada lógico que saluda al usuario de forma personalizada usando los datos ya cargados.
+
+**Flujo de Salida:** Al finalizar la lógica (en milisegundos), el grafo transiciona automáticamente al nodo de Recolección de Datos (COLLECT_DATA) sin esperar un nuevo input del usuario.
+
 ### 2. LOAN_COLLECTING_PROFILE
 - renta (INPUT):
     - Tipo: int
