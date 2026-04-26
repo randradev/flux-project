@@ -65,3 +65,80 @@ def loan_entry_node(state: FluxState) -> dict:
             "loan_sim": {},
         },
     }
+
+
+def loan_risk_engine_node(state: FluxState) -> dict:
+    """
+    Nodo LOAN_RISK_ENGINE: motor de riesgo para crédito de consumo.
+
+    INPUT (State leído):
+        - state["collecting_data"]["loan_profile"]: renta, antiguedad_laboral, nivel_estudios
+        - state["collecting_data"]["loan_sim"]: monto_solicitado, plazo_solicitado
+        - state["preparation_data"]["edad"]: edad del usuario
+
+    PROCESO:
+        1. Extraer inputs de los namespaces correctos.
+        2. Invocar al motor de scoring y cálculo financiero (modules/credit_eng.py).
+        3. Escribir todos los outputs en evaluation_results["loan_engine"].
+
+    OUTPUT (campos del State que modifica):
+        - evaluation_results["loan_engine"]: Resultado completo del motor.
+        - session["current_node"]: "LOAN_RISK_ENGINE".
+
+    NOTA ARQUITECTURA: 
+    Este nodo actúa como 'wrapper'. La lógica de cálculo pesada debe residir 
+    en módulos independientes para facilitar tests unitarios.
+    """
+    session = state.get("session", {})
+    prep = state.get("preparation_data", {})
+    collecting = state.get("collecting_data", {})
+
+    # ── Lectura de inputs desde los namespaces correctos ──────────
+    loan_profile = collecting.get("loan_profile", {})
+    loan_sim = collecting.get("loan_sim", {})
+
+    renta = loan_profile.get("renta", 0)
+    antiguedad_laboral = loan_profile.get("antiguedad_laboral", 0)
+    nivel_estudios = loan_profile.get("nivel_estudios", "")
+    monto_solicitado = loan_sim.get("monto_solicitado", 0)
+    plazo_solicitado = loan_sim.get("plazo_solicitado", 0)
+    edad = prep.get("edad", 0)
+
+    # ── Lógica del motor (Orquestación) ──────────────────────────
+    # TODO: En Fase 2, delegar este cálculo a: 
+    # engine_result = credit_eng.calculate_risk_score(renta, monto, edad, etc.)
+
+    # Por ahora, stub de cumplimiento arquitectónico:
+    engine_result = {
+        "status_proceso": "PRE_APPROVED",  # Stub
+        "scoring_puntos": 0,
+        "nivel_riesgo": "",
+        "tasa_interes_mensual": 0.0,
+        "cuota_mensual": 0,
+        "cuota_maxima_permitida": int(renta * 0.30),
+        "capacidad_pago_valida": True,
+        "ctc": 0,
+        "total_intereses": 0,
+        "cae": 0.0,
+        "monto_aprobado": monto_solicitado,
+        "plazo_aprobado": plazo_solicitado,
+        "motivo_rechazo": None,
+    }
+
+    # ── Sincronía ──────────────────────────────
+    # Notificamos que el procesamiento del motor ha terminado con éxito
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="LOAN_RISK_ENGINE",
+            node_status="SUCCESS",     # El nodo finalizó su ejecución
+            engine_status="COMPLETED"  # El motor terminó su proceso
+        )
+
+    return {
+        "evaluation_results": {
+            "loan_engine": engine_result,
+        },
+        "session": {**session, "current_node": "LOAN_RISK_ENGINE"},
+    }

@@ -194,7 +194,7 @@ Nodo de servicio para formalización documental.
     - Valor: "Depósito a Plazo"
 - display_data:
     - download_url: Enlace al documento firmado.
-    - main_detail: Dato clave (ej: "Monto: $5.000.000" o "Cuenta: Start").
+    - main_detail: Dato clave (ej: "Monto: $5.000.000").
     - security_hash: Hash SHA-256 de la transacción.
 Destino: GLOBAL_END (estado transversal)
 
