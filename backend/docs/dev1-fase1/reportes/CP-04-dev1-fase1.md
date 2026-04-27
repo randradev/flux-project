@@ -50,9 +50,9 @@ Se deja constancia de los elementos creados en este paso que actúan como placeh
 
 | Elemento | Archivo | Nodo en Grafo | Estado | Fase de Desarrollo |
 |----------|---------|---------------|--------|-------------------|
-| `loan_entry_node` | `nodes/credit.py` | `loan_entry` | Stub | **Fase 2** (Implementación Completa) |
-| `account_entry_node` | `nodes/account.py` | `account_entry` | Stub | **Fase 3** |
-| `deposit_entry_node` | `nodes/deposit.py` | `dap_entry` | Stub | **Fase 3** |
+| `loan_init_node` | `nodes/credit.py` | `loan_init` | Stub | **Fase 2** (Implementación Completa) |
+| `account_init_node` | `nodes/account.py` | `account_init` | Stub | **Fase 3** |
+| `dap_init_node` | `nodes/deposit.py` | `dap_init` | Stub | **Fase 3** |
 | `general_response_node`| `nodes/common.py` | `general_response`| Funcional | Base para expansión de FAQs |
 | `route_after_welcome` | `edges.py` | N/A | Lógica Base | Expandible con nuevos productos |
 | `AsyncPostgresSaver` | `infra/checkpointer.py` | N/A | Pendiente de test | Validar compatibilidad con flujo sync |

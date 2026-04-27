@@ -6,7 +6,7 @@ Cuando un usuario abandona a mitad de un flujo de crédito y luego inicia un flu
 
 **Patrón de reset:** Retornar el sub-cajón como un `TypedDict` vacío (`{}`). LangGraph hará merge: el sub-cajón queda limpio, los otros sub-cajones (de otros productos) se preservan.
 
-### 3.2 Implementación de `loan_entry_node` (Stub + Reset)
+### 3.2 Implementación de `loan_init_node` (Stub + Reset)
 
 ```python
 # app/graph/nodes/credit.py
@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def loan_entry_node(state: FluxState) -> dict:
+def loan_init_node(state: FluxState) -> dict:
     """
     Nodo LOAN_INIT: punto de entrada al flujo de Crédito de Consumo.
 
@@ -69,7 +69,7 @@ def loan_entry_node(state: FluxState) -> dict:
     }
 ```
 
-### 3.3 Implementación de `account_entry_node` (Stub + Reset)
+### 3.3 Implementación de `account_init_node` (Stub + Reset)
 
 ```python
 # app/graph/nodes/account.py
@@ -78,7 +78,7 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def account_entry_node(state: FluxState) -> dict:
+def account_init_node(state: FluxState) -> dict:
     """
     Nodo ACCOUNT_INIT: punto de entrada al flujo de Cuenta Corriente.
 
@@ -103,7 +103,7 @@ def account_entry_node(state: FluxState) -> dict:
     }
 ```
 
-### 3.4 Implementación de `deposit_entry_node` (Stub + Reset)
+### 3.4 Implementación de `dap_init_node` (Stub + Reset)
 
 ```python
 # app/graph/nodes/deposit.py
@@ -112,7 +112,7 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def deposit_entry_node(state: FluxState) -> dict:
+def dap_init_node(state: FluxState) -> dict:
     """
     Nodo DAP_INIT: punto de entrada al flujo de Depósito a Plazo.
 
@@ -141,8 +141,8 @@ def deposit_entry_node(state: FluxState) -> dict:
 ### 3.5 Sub-paso: Verificación Post-Implementación
 
 **Checklist de verificación manual:**
-- [ ] Simular un escenario de "flujo cruzado": ejecutar `loan_entry_node` con `collecting_data.loan_profile` pre-poblado → verificar que el resultado tiene `loan_profile: {}`.
-- [ ] Verificar que el reset de `loan_entry_node` NO borra `account_profile` ni `dap_params` (otros productos deben ser intocables).
+- [ ] Simular un escenario de "flujo cruzado": ejecutar `loan_init_node` con `collecting_data.loan_profile` pre-poblado → verificar que el resultado tiene `loan_profile: {}`.
+- [ ] Verificar que el reset de `loan_init_node` NO borra `account_profile` ni `dap_params` (otros productos deben ser intocables).
 - [ ] Verificar que `preparation_data` se puede leer correctamente en cada nodo INIT (datos disponibles antes de la primera interacción del usuario).
 
 ### 3.6 Pruebas del Paso 3
@@ -176,10 +176,10 @@ def make_polluted_state():
 
 
 def test_loan_init_resets_only_loan_namespace():
-    """loan_entry_node resetea solo loan_profile y loan_sim, no los demás."""
-    from app.graph.nodes.credit import loan_entry_node
+    """loan_init_node resetea solo loan_profile y loan_sim, no los demás."""
+    from app.graph.nodes.credit import loan_init_node
     state = make_polluted_state()
-    result = loan_entry_node(state)
+    result = loan_init_node(state)
 
     cd = result.get("collecting_data", {})
     # Loan reseteado
@@ -191,11 +191,11 @@ def test_loan_init_resets_only_loan_namespace():
 
 
 def test_account_init_resets_only_account_namespace():
-    """account_entry_node resetea solo account_profile."""
-    from app.graph.nodes.account import account_entry_node
+    """account_init_node resetea solo account_profile."""
+    from app.graph.nodes.account import account_init_node
     state = make_polluted_state()
     state["session"]["product_intent"] = "ACCOUNT"
-    result = account_entry_node(state)
+    result = account_init_node(state)
 
     cd = result.get("collecting_data", {})
     assert cd.get("account_profile") == {}
@@ -205,18 +205,18 @@ def test_account_init_resets_only_account_namespace():
 
 def test_init_node_uses_preparation_data():
     """Los nodos INIT usan preparation_data (no user_data) para el nombre."""
-    from app.graph.nodes.credit import loan_entry_node
+    from app.graph.nodes.credit import loan_init_node
     state = make_polluted_state()
-    result = loan_entry_node(state)
+    result = loan_init_node(state)
     welcome_msg = result["messages"][0].content
     assert "Carlos" in welcome_msg
 
 
 def test_init_node_updates_current_node():
     """El nodo INIT actualiza session["current_node"]."""
-    from app.graph.nodes.credit import loan_entry_node
+    from app.graph.nodes.credit import loan_init_node
     state = make_polluted_state()
-    result = loan_entry_node(state)
+    result = loan_init_node(state)
     assert result["session"]["current_node"] == "LOAN_INIT"
 ```
 

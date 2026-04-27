@@ -2012,11 +2012,11 @@ def route_after_welcome(state: FluxState) -> str:
 
     # Si ya había intención detectada (sesión reanudada), reanudar el flujo
     if product_intent == "LOAN":
-        return "loan_entry"   # Placeholder: en Fase 2 será LOAN_INIT
+        return "loan_init"   # Placeholder: en Fase 2 será LOAN_INIT
     elif product_intent == "ACCOUNT":
-        return "account_entry"  # Placeholder: en Fase 3 será ACCOUNT_INIT
+        return "account_init"  # Placeholder: en Fase 3 será ACCOUNT_INIT
     elif product_intent == "DAP":
-        return "dap_entry"    # Placeholder: en Fase 3 será DAP_INIT
+        return "dap_init"    # Placeholder: en Fase 3 será DAP_INIT
 
     # Sin intención previa → ir al clasificador
     return "intent_router"
@@ -2036,11 +2036,11 @@ def route_after_intent(state: FluxState) -> str:
     product_intent = session.get("product_intent", "GENERAL")
 
     if product_intent == "LOAN":
-        return "loan_entry"
+        return "loan_init"
     elif product_intent == "ACCOUNT":
-        return "account_entry"
+        return "account_init"
     elif product_intent == "DAP":
-        return "dap_entry"
+        return "dap_init"
     else:
         return "general_response"
 ```
@@ -2067,11 +2067,11 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def loan_entry_node(state: FluxState) -> dict:
+def loan_init_node(state: FluxState) -> dict:
     """
     INPUT: state["session"]["product_intent"] == "LOAN"
     PROCESO: [STUB FASE 1] Confirma la intención y avisa que el flujo completo viene en Fase 2.
-    OUTPUT: messages (confirmación), session["current_node"] = "LOAN_ENTRY_STUB"
+    OUTPUT: messages (confirmación), session["current_node"] = "LOAN_INIT_STUB"
     """
     user_data = state.get("user_data", {})
     first_name = user_data.get("full_name", "").split()[0] or "amig@"
@@ -2082,7 +2082,7 @@ def loan_entry_node(state: FluxState) -> dict:
     session = state.get("session", {})
     return {
         "messages": [AIMessage(content=msg)],
-        "session": {**session, "current_node": "LOAN_ENTRY_STUB"},
+        "session": {**session, "current_node": "LOAN_INIT_STUB"},
     }
 ```
 
@@ -2096,7 +2096,7 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def account_entry_node(state: FluxState) -> dict:
+def account_init_node(state: FluxState) -> dict:
     """
     INPUT: state["session"]["product_intent"] == "ACCOUNT"
     PROCESO: [STUB FASE 1]
@@ -2106,7 +2106,7 @@ def account_entry_node(state: FluxState) -> dict:
     msg = "Entendido, quieres abrir una **Cuenta Corriente**. El flujo completo estará disponible en Fase 3."
     return {
         "messages": [AIMessage(content=msg)],
-        "session": {**session, "current_node": "ACCOUNT_ENTRY_STUB"},
+        "session": {**session, "current_node": "ACCOUNT_INIT_STUB"},
     }
 ```
 
@@ -2120,7 +2120,7 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def deposit_entry_node(state: FluxState) -> dict:
+def dap_init_node(state: FluxState) -> dict:
     """
     INPUT: state["session"]["product_intent"] == "DAP"
     PROCESO: [STUB FASE 1]
@@ -2130,7 +2130,7 @@ def deposit_entry_node(state: FluxState) -> dict:
     msg = "Entendido, quieres contratar un **Depósito a Plazo**. El flujo completo estará disponible en Fase 3."
     return {
         "messages": [AIMessage(content=msg)],
-        "session": {**session, "current_node": "DAP_ENTRY_STUB"},
+        "session": {**session, "current_node": "DAP_INIT_STUB"},
     }
 ```
 
@@ -2189,9 +2189,9 @@ from app.graph.nodes.common import (
     intent_router_node,
     general_response_node,
 )
-from app.graph.nodes.credit import loan_entry_node
-from app.graph.nodes.account import account_entry_node
-from app.graph.nodes.deposit import deposit_entry_node
+from app.graph.nodes.credit import loan_init_node
+from app.graph.nodes.account import account_init_node
+from app.graph.nodes.deposit import dap_init_node
 from app.graph.edges import route_after_welcome, route_after_intent
 from app.infra.checkpointer import get_checkpointer
 
@@ -2212,9 +2212,9 @@ def build_graph() -> StateGraph:
     # ── Registro de Nodos ─────────────────────────────────────
     graph.add_node("welcome",          welcome_node)
     graph.add_node("intent_router",    intent_router_node)
-    graph.add_node("loan_entry",       loan_entry_node)
-    graph.add_node("account_entry",    account_entry_node)
-    graph.add_node("dap_entry",        deposit_entry_node)
+    graph.add_node("loan_init",       loan_init_node)
+    graph.add_node("account_init",    account_init_node)
+    graph.add_node("dap_init",        dap_init_node)
     graph.add_node("general_response", general_response_node)
 
     # ── Punto de Entrada ──────────────────────────────────────
@@ -2227,9 +2227,9 @@ def build_graph() -> StateGraph:
         route_after_welcome,
         {
             "intent_router":  "intent_router",
-            "loan_entry":     "loan_entry",
-            "account_entry":  "account_entry",
-            "dap_entry":      "dap_entry",
+            "loan_init":     "loan_init",
+            "account_init":  "account_init",
+            "dap_init":      "dap_init",
         }
     )
 
@@ -2238,17 +2238,17 @@ def build_graph() -> StateGraph:
         "intent_router",
         route_after_intent,
         {
-            "loan_entry":       "loan_entry",
-            "account_entry":    "account_entry",
-            "dap_entry":        "dap_entry",
+            "loan_init":       "loan_init",
+            "account_init":    "account_init",
+            "dap_init":        "dap_init",
             "general_response": "general_response",
         }
     )
 
     # ── Aristas Finales (todos los stubs terminan por ahora) ──
-    graph.add_edge("loan_entry",       END)
-    graph.add_edge("account_entry",    END)
-    graph.add_edge("dap_entry",        END)
+    graph.add_edge("loan_init",       END)
+    graph.add_edge("account_init",    END)
+    graph.add_edge("dap_init",        END)
     graph.add_edge("general_response", END)
 
     return graph
@@ -2321,8 +2321,8 @@ def test_graph_has_correct_nodes():
     graph = build_graph()
     
     expected_nodes = {
-        "welcome", "intent_router", "loan_entry",
-        "account_entry", "dap_entry", "general_response"
+        "welcome", "intent_router", "loan_init",
+        "account_init", "dap_init", "general_response"
     }
     actual_nodes = set(graph.nodes.keys())
     

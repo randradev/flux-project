@@ -6,7 +6,7 @@
 
 Sin embargo, se debe verificar explícitamente que:
 1. El path `state → session → product_intent` sigue funcionando.
-2. Los nombres de nodo que retornan las funciones (`"loan_entry"`, `"account_entry"`, `"dap_entry"`) coinciden con los registrados en `workflow.py`.
+2. Los nombres de nodo que retornan las funciones (`"loan_init"`, `"account_init"`, `"dap_init"`) coinciden con los registrados en `workflow.py`.
 3. El `workflow.py` importa correctamente los nuevos nodos (los stubs refactorizados).
 
 ### 5.2 Verificación de `edges.py` (sin cambios requeridos)
@@ -19,9 +19,9 @@ Sin embargo, se debe verificar explícitamente que:
 # - Los nombres de nodo destino no cambiaron
 
 # VERIFICAR que estas rutas siguen siendo válidas en workflow.py:
-# "loan_entry"     → loan_entry_node     (en nodes/credit.py)
-# "account_entry"  → account_entry_node  (en nodes/account.py)
-# "dap_entry"      → deposit_entry_node  (en nodes/deposit.py)
+# "loan_init"     → loan_init_node     (en nodes/credit.py)
+# "account_init"  → account_init_node  (en nodes/account.py)
+# "dap_init"      → dap_init_node  (en nodes/deposit.py)
 # "intent_router"  → intent_router_node  (en nodes/common.py)
 # "general_response" → general_response_node (en nodes/common.py)
 ```
@@ -45,8 +45,8 @@ El único cambio en `workflow.py` es que los nodos importados ahora retornan `pr
 - [ ] Crear un state inicial mínimo con `user_data`, `session` y `messages: []`.
 - [ ] Ejecutar `welcome_node` → verificar que `preparation_data` aparece en el state.
 - [ ] Ejecutar `intent_router_node` → verificar que `session["product_intent"]` se setea.
-- [ ] Ejecutar `route_after_intent` con el state → verificar que retorna `"loan_entry"` para intent `"LOAN"`.
-- [ ] Ejecutar `loan_entry_node` → verificar reset de `collecting_data["loan_profile"]`.
+- [ ] Ejecutar `route_after_intent` con el state → verificar que retorna `"loan_init"` para intent `"LOAN"`.
+- [ ] Ejecutar `loan_init_node` → verificar reset de `collecting_data["loan_profile"]`.
 - [ ] Verificar que el checkpointer puede serializar el state v2.0 a JSON (Supabase).
 
 ### 5.5 Pruebas de Integración del Paso 5
@@ -120,14 +120,14 @@ def test_edges_route_correctly_after_refactor(mock_update):
         "preparation_data": {},
         "collecting_data": {},
     }
-    assert route_after_intent(state_loan) == "loan_entry"
+    assert route_after_intent(state_loan) == "loan_init"
 
     state_dap = {
         "session": {"product_intent": "DAP"},
         "preparation_data": {},
         "collecting_data": {},
     }
-    assert route_after_intent(state_dap) == "dap_entry"
+    assert route_after_intent(state_dap) == "dap_init"
 
     state_general = {
         "session": {"product_intent": "GENERAL"},
@@ -174,6 +174,6 @@ def test_state_serializable_to_json(mock_update):
 ```
 
 **Documentación del Paso 5:**
-> `edges.py` no requirió modificaciones: solo accede a `session["product_intent"]`, que es una clave de `SessionData` que no cambió en v2.0. `workflow.py` tampoco requirió cambios estructurales: LangGraph infiere la serialización del State desde el TypedDict. Se confirmó mediante pruebas de integración con `MemorySaver` que el flujo completo (welcome → intent_router → loan_entry) funciona correctamente con la nueva estructura de namespaces.
+> `edges.py` no requirió modificaciones: solo accede a `session["product_intent"]`, que es una clave de `SessionData` que no cambió en v2.0. `workflow.py` tampoco requirió cambios estructurales: LangGraph infiere la serialización del State desde el TypedDict. Se confirmó mediante pruebas de integración con `MemorySaver` que el flujo completo (welcome → intent_router → loan_init) funciona correctamente con la nueva estructura de namespaces.
 
 ---

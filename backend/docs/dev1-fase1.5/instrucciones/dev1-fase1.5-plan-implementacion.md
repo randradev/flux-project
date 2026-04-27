@@ -661,7 +661,7 @@ Cuando un usuario abandona a mitad de un flujo de crédito y luego inicia un flu
 
 **Patrón de reset:** Retornar el sub-cajón como un `TypedDict` vacío (`{}`). LangGraph hará merge: el sub-cajón queda limpio, los otros sub-cajones (de otros productos) se preservan.
 
-### 3.2 Implementación de `loan_entry_node` (Stub + Reset)
+### 3.2 Implementación de `loan_init_node` (Stub + Reset)
 
 ```python
 # app/graph/nodes/credit.py
@@ -670,7 +670,7 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def loan_entry_node(state: FluxState) -> dict:
+def loan_init_node(state: FluxState) -> dict:
     """
     Nodo LOAN_INIT: punto de entrada al flujo de Crédito de Consumo.
 
@@ -724,7 +724,7 @@ def loan_entry_node(state: FluxState) -> dict:
     }
 ```
 
-### 3.3 Implementación de `account_entry_node` (Stub + Reset)
+### 3.3 Implementación de `account_init_node` (Stub + Reset)
 
 ```python
 # app/graph/nodes/account.py
@@ -733,7 +733,7 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def account_entry_node(state: FluxState) -> dict:
+def account_init_node(state: FluxState) -> dict:
     """
     Nodo ACCOUNT_INIT: punto de entrada al flujo de Cuenta Corriente.
 
@@ -758,7 +758,7 @@ def account_entry_node(state: FluxState) -> dict:
     }
 ```
 
-### 3.4 Implementación de `deposit_entry_node` (Stub + Reset)
+### 3.4 Implementación de `dap_init_node` (Stub + Reset)
 
 ```python
 # app/graph/nodes/deposit.py
@@ -767,7 +767,7 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 
 
-def deposit_entry_node(state: FluxState) -> dict:
+def dap_init_node(state: FluxState) -> dict:
     """
     Nodo DAP_INIT: punto de entrada al flujo de Depósito a Plazo.
 
@@ -796,8 +796,8 @@ def deposit_entry_node(state: FluxState) -> dict:
 ### 3.5 Sub-paso: Verificación Post-Implementación
 
 **Checklist de verificación manual:**
-- [ ] Simular un escenario de "flujo cruzado": ejecutar `loan_entry_node` con `collecting_data.loan_profile` pre-poblado → verificar que el resultado tiene `loan_profile: {}`.
-- [ ] Verificar que el reset de `loan_entry_node` NO borra `account_profile` ni `dap_params` (otros productos deben ser intocables).
+- [ ] Simular un escenario de "flujo cruzado": ejecutar `loan_init_node` con `collecting_data.loan_profile` pre-poblado → verificar que el resultado tiene `loan_profile: {}`.
+- [ ] Verificar que el reset de `loan_init_node` NO borra `account_profile` ni `dap_params` (otros productos deben ser intocables).
 - [ ] Verificar que `preparation_data` se puede leer correctamente en cada nodo INIT (datos disponibles antes de la primera interacción del usuario).
 
 ### 3.6 Pruebas del Paso 3
@@ -831,10 +831,10 @@ def make_polluted_state():
 
 
 def test_loan_init_resets_only_loan_namespace():
-    """loan_entry_node resetea solo loan_profile y loan_sim, no los demás."""
-    from app.graph.nodes.credit import loan_entry_node
+    """loan_init_node resetea solo loan_profile y loan_sim, no los demás."""
+    from app.graph.nodes.credit import loan_init_node
     state = make_polluted_state()
-    result = loan_entry_node(state)
+    result = loan_init_node(state)
 
     cd = result.get("collecting_data", {})
     # Loan reseteado
@@ -846,11 +846,11 @@ def test_loan_init_resets_only_loan_namespace():
 
 
 def test_account_init_resets_only_account_namespace():
-    """account_entry_node resetea solo account_profile."""
-    from app.graph.nodes.account import account_entry_node
+    """account_init_node resetea solo account_profile."""
+    from app.graph.nodes.account import account_init_node
     state = make_polluted_state()
     state["session"]["product_intent"] = "ACCOUNT"
-    result = account_entry_node(state)
+    result = account_init_node(state)
 
     cd = result.get("collecting_data", {})
     assert cd.get("account_profile") == {}
@@ -860,18 +860,18 @@ def test_account_init_resets_only_account_namespace():
 
 def test_init_node_uses_preparation_data():
     """Los nodos INIT usan preparation_data (no user_data) para el nombre."""
-    from app.graph.nodes.credit import loan_entry_node
+    from app.graph.nodes.credit import loan_init_node
     state = make_polluted_state()
-    result = loan_entry_node(state)
+    result = loan_init_node(state)
     welcome_msg = result["messages"][0].content
     assert "Carlos" in welcome_msg
 
 
 def test_init_node_updates_current_node():
     """El nodo INIT actualiza session["current_node"]."""
-    from app.graph.nodes.credit import loan_entry_node
+    from app.graph.nodes.credit import loan_init_node
     state = make_polluted_state()
-    result = loan_entry_node(state)
+    result = loan_init_node(state)
     assert result["session"]["current_node"] == "LOAN_INIT"
 ```
 
@@ -1122,7 +1122,7 @@ def test_dap_engine_term_premium_calculation():
 
 Sin embargo, se debe verificar explícitamente que:
 1. El path `state → session → product_intent` sigue funcionando.
-2. Los nombres de nodo que retornan las funciones (`"loan_entry"`, `"account_entry"`, `"dap_entry"`) coinciden con los registrados en `workflow.py`.
+2. Los nombres de nodo que retornan las funciones (`"loan_init"`, `"account_init"`, `"dap_init"`) coinciden con los registrados en `workflow.py`.
 3. El `workflow.py` importa correctamente los nuevos nodos (los stubs refactorizados).
 
 ### 5.2 Verificación de `edges.py` (sin cambios requeridos)
@@ -1135,9 +1135,9 @@ Sin embargo, se debe verificar explícitamente que:
 # - Los nombres de nodo destino no cambiaron
 
 # VERIFICAR que estas rutas siguen siendo válidas en workflow.py:
-# "loan_entry"     → loan_entry_node     (en nodes/credit.py)
-# "account_entry"  → account_entry_node  (en nodes/account.py)
-# "dap_entry"      → deposit_entry_node  (en nodes/deposit.py)
+# "loan_init"     → loan_init_node     (en nodes/credit.py)
+# "account_init"  → account_init_node  (en nodes/account.py)
+# "dap_init"      → dap_init_node  (en nodes/deposit.py)
 # "intent_router"  → intent_router_node  (en nodes/common.py)
 # "general_response" → general_response_node (en nodes/common.py)
 ```
@@ -1161,8 +1161,8 @@ El único cambio en `workflow.py` es que los nodos importados ahora retornan `pr
 - [ ] Crear un state inicial mínimo con `user_data`, `session` y `messages: []`.
 - [ ] Ejecutar `welcome_node` → verificar que `preparation_data` aparece en el state.
 - [ ] Ejecutar `intent_router_node` → verificar que `session["product_intent"]` se setea.
-- [ ] Ejecutar `route_after_intent` con el state → verificar que retorna `"loan_entry"` para intent `"LOAN"`.
-- [ ] Ejecutar `loan_entry_node` → verificar reset de `collecting_data["loan_profile"]`.
+- [ ] Ejecutar `route_after_intent` con el state → verificar que retorna `"loan_init"` para intent `"LOAN"`.
+- [ ] Ejecutar `loan_init_node` → verificar reset de `collecting_data["loan_profile"]`.
 - [ ] Verificar que el checkpointer puede serializar el state v2.0 a JSON (Supabase).
 
 ### 5.5 Pruebas de Integración del Paso 5
@@ -1236,14 +1236,14 @@ def test_edges_route_correctly_after_refactor(mock_update):
         "preparation_data": {},
         "collecting_data": {},
     }
-    assert route_after_intent(state_loan) == "loan_entry"
+    assert route_after_intent(state_loan) == "loan_init"
 
     state_dap = {
         "session": {"product_intent": "DAP"},
         "preparation_data": {},
         "collecting_data": {},
     }
-    assert route_after_intent(state_dap) == "dap_entry"
+    assert route_after_intent(state_dap) == "dap_init"
 
     state_general = {
         "session": {"product_intent": "GENERAL"},
@@ -1290,7 +1290,7 @@ def test_state_serializable_to_json(mock_update):
 ```
 
 **Documentación del Paso 5:**
-> `edges.py` no requirió modificaciones: solo accede a `session["product_intent"]`, que es una clave de `SessionData` que no cambió en v2.0. `workflow.py` tampoco requirió cambios estructurales: LangGraph infiere la serialización del State desde el TypedDict. Se confirmó mediante pruebas de integración con `MemorySaver` que el flujo completo (welcome → intent_router → loan_entry) funciona correctamente con la nueva estructura de namespaces.
+> `edges.py` no requirió modificaciones: solo accede a `session["product_intent"]`, que es una clave de `SessionData` que no cambió en v2.0. `workflow.py` tampoco requirió cambios estructurales: LangGraph infiere la serialización del State desde el TypedDict. Se confirmó mediante pruebas de integración con `MemorySaver` que el flujo completo (welcome → intent_router → loan_init) funciona correctamente con la nueva estructura de namespaces.
 
 ---
 

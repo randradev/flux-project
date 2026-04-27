@@ -3,8 +3,8 @@ app/graph/nodes/deposit.py
 ─────────────────────────────────────────────────────────────
 Nodos del flujo de Depósito a Plazo.
 
-Ruta del grafo: deposit_entry → dap_investment_engine → END
-  - deposit_entry              (ID LangGraph) → current_node = "DAP_INIT"
+Ruta del grafo: dap_init → dap_investment_engine → END
+  - dap_init              (ID LangGraph) → current_node = "DAP_INIT"
   - dap_investment_engine  (ID LangGraph) → current_node = "DAP_INVESTMENT_ENGINE"
 """
 
@@ -12,13 +12,13 @@ from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 from app.infra.supabase import update_application_semaphores
 
-# ── DEPOSIT_ENTRY (deposit_entry) ────────────────────────────
+# ── DAP_INIT (dap_init) ────────────────────────────
 
-def deposit_entry_node(state: FluxState) -> dict:
+def dap_init_node(state: FluxState) -> dict:
     """
     Nodo DAP_INIT: punto de entrada al flujo de Depósito a Plazo.
 
-    ID LangGraph : deposit_entry
+    ID LangGraph : dap_init
     current_node : DAP_INIT   ← valor semántico para GPS y Supabase
 
     PROCESO:

@@ -14,7 +14,7 @@ VERSIÓN: 1.5 — Motores financieros registrados (stubs) y ruta INIT → ENGINE
 CAMBIOS vs v1.0:
   - Importados y registrados: loan_risk_engine_node, account_evaluation_engine_node,
     dap_investment_engine_node.
-  - Ruta: loan_entry → loan_risk_engine → END (idem para account y dap).
+  - Ruta: loan_init → loan_risk_engine → END (idem para account y dap).
   - Eliminado: edges directos INIT → END para los 3 productos.
 
 NOMENCLATURA (Regla de Oro de este archivo):
@@ -27,11 +27,11 @@ NOMENCLATURA (Regla de Oro de este archivo):
   ├──────────────────────────┼──────────────────────────────┤
   │ welcome                  │ WELCOME_NODE                 │
   │ intent_router            │ INTENT_ROUTER                │
-  │ loan_entry               │ LOAN_INIT                    │
+  │ loan_init               │ LOAN_INIT                    │
   │ loan_risk_engine         │ LOAN_RISK_ENGINE             │
-  │ account_entry            │ ACCOUNT_INIT                 │
+  │ account_init            │ ACCOUNT_INIT                 │
   │ account_evaluation_engine│ ACCOUNT_EVALUATION_ENGINE    │
-  │ dap_entry                │ DAP_INIT                     │
+  │ dap_init                │ DAP_INIT                     │
   │ dap_investment_engine    │ DAP_INVESTMENT_ENGINE        │
   │ general_response         │ GENERAL_RESPONSE             │
   └──────────────────────────┴──────────────────────────────┘
@@ -45,9 +45,9 @@ from app.graph.nodes.common import (
     intent_router_node,
     general_response_node,
 )
-from app.graph.nodes.credit import loan_entry_node, loan_risk_engine_node
-from app.graph.nodes.account import account_entry_node, account_evaluation_engine_node
-from app.graph.nodes.deposit import deposit_entry_node, dap_investment_engine_node
+from app.graph.nodes.credit import loan_init_node, loan_risk_engine_node
+from app.graph.nodes.account import account_init_node, account_evaluation_engine_node
+from app.graph.nodes.deposit import dap_init_node, dap_investment_engine_node
 from app.graph.edges import route_after_welcome, route_after_intent
 from app.infra.checkpointer import get_checkpointer
 
@@ -72,15 +72,15 @@ def build_graph() -> StateGraph:
     graph.add_node("general_response",           general_response_node)
 
     # Nodos de Crédito de Consumo
-    graph.add_node("loan_entry",                 loan_entry_node)
+    graph.add_node("loan_init",                 loan_init_node)
     graph.add_node("loan_risk_engine",           loan_risk_engine_node)
 
     # Nodos de Cuenta Corriente
-    graph.add_node("account_entry",              account_entry_node)
+    graph.add_node("account_init",              account_init_node)
     graph.add_node("account_evaluation_engine",  account_evaluation_engine_node)
 
     # Nodos de Depósito a Plazo
-    graph.add_node("dap_entry",                  deposit_entry_node)
+    graph.add_node("dap_init",                  dap_init_node)
     graph.add_node("dap_investment_engine",      dap_investment_engine_node)
 
     # ── Punto de Entrada ──────────────────────────────────────
@@ -93,9 +93,9 @@ def build_graph() -> StateGraph:
         route_after_welcome,
         {
             "intent_router":  "intent_router",
-            "loan_entry":     "loan_entry",
-            "account_entry":  "account_entry",
-            "dap_entry":      "dap_entry",
+            "loan_init":     "loan_init",
+            "account_init":  "account_init",
+            "dap_init":      "dap_init",
         }
     )
 
@@ -104,24 +104,24 @@ def build_graph() -> StateGraph:
         "intent_router",
         route_after_intent,
         {
-            "loan_entry":       "loan_entry",
-            "account_entry":    "account_entry",
-            "dap_entry":        "dap_entry",
+            "loan_init":       "loan_init",
+            "account_init":    "account_init",
+            "dap_init":        "dap_init",
             "general_response": "general_response",
         }
     )
 
     # ── Rutas de Producto: INIT → ENGINE → END ────────────────
     # Crédito de Consumo
-    graph.add_edge("loan_entry",                "loan_risk_engine")
+    graph.add_edge("loan_init",                "loan_risk_engine")
     graph.add_edge("loan_risk_engine",          END)
 
     # Cuenta Corriente
-    graph.add_edge("account_entry",             "account_evaluation_engine")
+    graph.add_edge("account_init",             "account_evaluation_engine")
     graph.add_edge("account_evaluation_engine", END)
 
     # Depósito a Plazo
-    graph.add_edge("dap_entry",                 "dap_investment_engine")
+    graph.add_edge("dap_init",                 "dap_investment_engine")
     graph.add_edge("dap_investment_engine",     END)
 
     # General

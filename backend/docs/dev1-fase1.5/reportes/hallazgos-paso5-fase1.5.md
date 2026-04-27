@@ -11,7 +11,7 @@ A continuación, presento la lista de hallazgos detallada:
 1. Inconsistencia de Identificadores (Workflow vs. Implementación)
 
 - **Archivo:** workflow.py (Líneas 45-47) vs. credit.py (Líneas 53, 60).
-- **Descripción:** En el registro del grafo (workflow.py), los nodos se definen con los IDs "loan_entry", "account_entry" y "dap_entry". Sin embargo, las funciones de nodo en sus respectivos archivos (credit.py, account.py, deposit.py) establecen el estado current_node y los semáforos de Supabase como "LOAN_INIT", "ACCOUNT_INIT" y "DAP_INIT".
+- **Descripción:** En el registro del grafo (workflow.py), los nodos se definen con los IDs "loan_init", "account_init" y "dap_init". Sin embargo, las funciones de nodo en sus respectivos archivos (credit.py, account.py, deposit.py) establecen el estado current_node y los semáforos de Supabase como "LOAN_INIT", "ACCOUNT_INIT" y "DAP_INIT".
 - **Impacto:** El estado del grafo en LangGraph no coincidirá con el metadato de sesión guardado, rompiendo la trazabilidad del "GPS" del sistema.
 
 2. Omisión de Nodos de Motor (ENGINE)

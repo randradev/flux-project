@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from langchain_core.messages import AIMessage
-from app.graph.nodes.credit import loan_entry_node
-from app.graph.nodes.account import account_entry_node
-from app.graph.nodes.deposit import deposit_entry_node
+from app.graph.nodes.credit import loan_init_node
+from app.graph.nodes.account import account_init_node
+from app.graph.nodes.deposit import dap_init_node
 
 def make_polluted_state():
     """State con datos residuales de múltiples productos (simula sesiones anteriores)."""
@@ -30,9 +30,9 @@ def make_polluted_state():
 
 @patch("app.graph.nodes.credit.update_application_semaphores")
 def test_loan_init_resets_and_notifies(mock_semaphore):
-    """Verifica que loan_entry_node resetea su namespace y notifica SUCCESS."""
+    """Verifica que loan_init_node resetea su namespace y notifica SUCCESS."""
     state = make_polluted_state()
-    result = loan_entry_node(state)
+    result = loan_init_node(state)
 
     # 1. Verificar Reset
     cd = result.get("collecting_data", {})
@@ -53,10 +53,10 @@ def test_loan_init_resets_and_notifies(mock_semaphore):
 
 @patch("app.graph.nodes.account.update_application_semaphores")
 def test_account_init_resets_and_notifies(mock_semaphore):
-    """Verifica que account_entry_node resetea su namespace y notifica SUCCESS."""
+    """Verifica que account_init_node resetea su namespace y notifica SUCCESS."""
     state = make_polluted_state()
     state["session"]["product_intent"] = "ACCOUNT"
-    result = account_entry_node(state)
+    result = account_init_node(state)
 
     assert result["collecting_data"].get("account_profile") == {}
     mock_semaphore.assert_called_once_with(
@@ -68,10 +68,10 @@ def test_account_init_resets_and_notifies(mock_semaphore):
 
 @patch("app.graph.nodes.deposit.update_application_semaphores")
 def test_deposit_init_resets_and_notifies(mock_semaphore):
-    """Verifica que deposit_entry_node resetea su namespace y notifica SUCCESS."""
+    """Verifica que dap_init_node resetea su namespace y notifica SUCCESS."""
     state = make_polluted_state()
     state["session"]["product_intent"] = "DAP"
-    result = deposit_entry_node(state)
+    result = dap_init_node(state)
 
     assert result["collecting_data"].get("dap_params") == {}
     mock_semaphore.assert_called_once_with(

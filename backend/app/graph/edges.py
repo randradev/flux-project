@@ -31,11 +31,11 @@ def route_after_welcome(state: FluxState) -> str:
 
     # Si ya había intención detectada (sesión reanudada), reanudar el flujo
     if product_intent == "LOAN":
-        return "loan_entry"
+        return "loan_init"
     elif product_intent == "ACCOUNT":
-        return "account_entry"
+        return "account_init"
     elif product_intent == "DAP":
-        return "dap_entry"
+        return "dap_init"
 
     # Sin intención previa → ir al clasificador
     return "intent_router"
@@ -53,10 +53,10 @@ def route_after_intent(state: FluxState) -> str:
     product_intent = session.get("product_intent", "GENERAL")
 
     if product_intent == "LOAN":
-        return "loan_entry"
+        return "loan_init"
     elif product_intent == "ACCOUNT":
-        return "account_entry"
+        return "account_init"
     elif product_intent == "DAP":
-        return "dap_entry"
+        return "dap_init"
     else:
         return "general_response"

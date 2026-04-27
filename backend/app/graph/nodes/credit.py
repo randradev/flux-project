@@ -3,8 +3,8 @@ app/graph/nodes/credit.py
 ─────────────────────────────────────────────────────────────
 Nodos del flujo de Crédito de Consumo.
 
-Ruta del grafo: loan_entry → loan_risk_engine → END
-  - loan_entry        (ID LangGraph) → current_node = "LOAN_INIT"
+Ruta del grafo: loan_init → loan_risk_engine → END
+  - loan_init        (ID LangGraph) → current_node = "LOAN_INIT"
   - loan_risk_engine  (ID LangGraph) → current_node = "LOAN_RISK_ENGINE"
 """
 
@@ -13,13 +13,13 @@ from app.graph.state import FluxState
 from app.infra.supabase import update_application_semaphores
 
 
-# ── LOAN_ENTRY (loan_entry) ───────────────────────────────────
+# ── LOAN_INIT (loan_init) ───────────────────────────────────
 
-def loan_entry_node(state: FluxState) -> dict:
+def loan_init_node(state: FluxState) -> dict:
     """
     Nodo LOAN_INIT: punto de entrada al flujo de Crédito de Consumo.
 
-    ID LangGraph : loan_entry
+    ID LangGraph : loan_init
     current_node : LOAN_INIT   ← valor semántico para GPS y Supabase
 
     INPUT (State):

@@ -3,8 +3,8 @@ app/graph/nodes/account.py
 ─────────────────────────────────────────────────────────────
 Nodos del flujo de Cuenta Corriente.
 
-Ruta del grafo: account_entry → account_evaluation_engine → END
-  - account_entry              (ID LangGraph) → current_node = "ACCOUNT_INIT"
+Ruta del grafo: account_init → account_evaluation_engine → END
+  - account_init              (ID LangGraph) → current_node = "ACCOUNT_INIT"
   - account_evaluation_engine  (ID LangGraph) → current_node = "ACCOUNT_EVALUATION_ENGINE"
 """
 
@@ -13,13 +13,13 @@ from app.graph.state import FluxState
 from app.infra.supabase import update_application_semaphores
 
 
-# ── ACCOUNT_ENTRY (account_entry) ────────────────────────────
+# ── ACCOUNT_INIT (account_init) ────────────────────────────
 
-def account_entry_node(state: FluxState) -> dict:
+def account_init_node(state: FluxState) -> dict:
     """
     Nodo ACCOUNT_INIT: punto de entrada al flujo de Cuenta Corriente.
 
-    ID LangGraph : account_entry
+    ID LangGraph : account_init
     current_node : ACCOUNT_INIT   ← valor semántico para GPS y Supabase
 
     PROCESO:

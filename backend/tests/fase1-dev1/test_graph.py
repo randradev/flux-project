@@ -35,8 +35,8 @@ def test_graph_has_correct_nodes():
     graph = build_graph()
     
     expected_nodes = {
-        "welcome", "intent_router", "loan_entry",
-        "account_entry", "dap_entry", "general_response"
+        "welcome", "intent_router", "loan_init",
+        "account_init", "dap_init", "general_response"
     }
     actual_nodes = set(graph.nodes.keys())
     
@@ -149,4 +149,4 @@ async def test_graph_state_persists_across_invocations():
         "El checkpointer no persistió el estado correctamente"
 
     print(f"\nMensajes en sesión 1: {len(result1['messages'])}")
-    print(f"Mensajes en sesión 2: {len(result2['messages'])}")
+    print(f"Mensajes en sesión 2: {len(result2['messages'])}")

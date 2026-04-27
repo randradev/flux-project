@@ -886,7 +886,7 @@ Commit: `chore: iniciar CP-03 fase2 dev1 - nodos recolección`
 
 **Archivo:** `app/graph/nodes/credit.py`
 
-**Tarea:** Reemplazar el contenido del stub actual (`loan_entry_node`) con la estructura completa del módulo. El stub actual solo debe ser el punto de partida; el agente debe crear la estructura real.
+**Tarea:** Reemplazar el contenido del stub actual (`loan_init_node`) con la estructura completa del módulo. El stub actual solo debe ser el punto de partida; el agente debe crear la estructura real.
 
 Incluir:
 - Docstring de módulo completo.
@@ -1876,7 +1876,7 @@ def route_after_formalization(state: FluxState) -> str:
 
 **Tarea:** Actualizar `build_graph()` para registrar todos los nodos de crédito y sus aristas condicionales.
 
-Reemplazar `graph.add_edge("loan_entry", END)` por el subgrafo completo del crédito:
+Reemplazar `graph.add_edge("loan_init", END)` por el subgrafo completo del crédito:
 
 ```python
 # ── Importar nodos de crédito ────────────────────────────────
@@ -1923,10 +1923,10 @@ graph.add_node("loan_rejected_policy",       loan_rejected_policy_node)
 graph.add_node("loan_security_block",        loan_security_block_node)
 graph.add_node("loan_closed_by_user",        loan_closed_by_user_node)
 
-# ── Punto de entrada del crédito (reemplaza el stub loan_entry) ──
-# El nodo "loan_entry" del workflow actual redirige a "loan_init"
-# Estrategia: Renombrar loan_entry_node a loan_init_node directamente.
-# ATENCIÓN: Si el stub "loan_entry" ya está en el grafo del welcome flow,
+# ── Punto de entrada del crédito (reemplaza el stub loan_init) ──
+# El nodo "loan_init" del workflow actual redirige a "loan_init"
+# Estrategia: Renombrar loan_init_node a loan_init_node directamente.
+# ATENCIÓN: Si el stub "loan_init" ya está en el grafo del welcome flow,
 # evaluar si conviene mantener el nombre o actualizar el edge de bienvenida.
 # Documentar la decisión en el CP.
 
@@ -1983,9 +1983,9 @@ graph.add_edge("loan_security_block",  END)
 graph.add_edge("loan_closed_by_user",  END)
 ```
 
-**Decisión técnica crítica a documentar:** El nodo `"loan_entry"` del grafo actual (stub de Fase 1) y su relación con `"loan_init"`. Opciones:
-- a) Renombrar `"loan_entry"` a `"loan_init"` en todo el grafo (requiere actualizar `route_after_welcome` en `edges.py`).
-- b) Mantener `"loan_entry"` como pass-through que llama a `loan_init_node`.
+**Decisión técnica crítica a documentar:** El nodo `"loan_init"` del grafo actual (stub de Fase 1) y su relación con `"loan_init"`. Opciones:
+- a) Renombrar `"loan_init"` a `"loan_init"` en todo el grafo (requiere actualizar `route_after_welcome` en `edges.py`).
+- b) Mantener `"loan_init"` como pass-through que llama a `loan_init_node`.
 
 El agente debe elegir la opción A (renombrar) por ser más limpia, pero debe documentarlo en el CP y verificar que no rompe el ruteo de bienvenida.
 
