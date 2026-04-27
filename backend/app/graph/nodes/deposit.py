@@ -1,12 +1,36 @@
+"""
+app/graph/nodes/deposit.py
+─────────────────────────────────────────────────────────────
+Nodos del flujo de Depósito a Plazo.
+
+Ruta del grafo: deposit_entry → dap_investment_engine → END
+  - deposit_entry              (ID LangGraph) → current_node = "DAP_INIT"
+  - dap_investment_engine  (ID LangGraph) → current_node = "DAP_INVESTMENT_ENGINE"
+"""
+
 from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 from app.infra.supabase import update_application_semaphores
+
+# ── DEPOSIT_ENTRY (deposit_entry) ────────────────────────────
 
 def deposit_entry_node(state: FluxState) -> dict:
     """
     Nodo DAP_INIT: punto de entrada al flujo de Depósito a Plazo.
 
-    RESET: Limpia collecting_data["dap_params"].
+    ID LangGraph : deposit_entry
+    current_node : DAP_INIT   ← valor semántico para GPS y Supabase
+
+    PROCESO:
+        1. Handshake: Verificar que product_intent == "DAP"
+        2. Reset: Limpiar dap_params.
+        3. Saludo personalizado con datos de preparation_data.
+        4. Actualizar semáforo: DAP_INIT / SUCCESS / PENDING.
+
+    OUTPUT:
+        - messages: Saludo de bienvenida al flujo de Depósito a Plazo.
+        - session["current_node"]: "DAP_INIT".
+        - collecting_data["dap_params"]: {} (limpio).
     """
     prep = state.get("preparation_data", {})
     session = state.get("session", {})
@@ -42,6 +66,9 @@ def deposit_entry_node(state: FluxState) -> dict:
 def dap_investment_engine_node(state: FluxState) -> dict:
     """
     Nodo DAP_INVESTMENT_ENGINE: motor de cálculo de inversión.
+
+    ID LangGraph : dap_investment_engine
+    current_node : DAP_INVESTMENT_ENGINE   ← valor semántico para GPS y Supabase
 
     INPUT (State leído):
         - state["collecting_data"]["dap_params"]: monto, moneda, plazo

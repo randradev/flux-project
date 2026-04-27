@@ -1,13 +1,37 @@
+"""
+app/graph/nodes/account.py
+─────────────────────────────────────────────────────────────
+Nodos del flujo de Cuenta Corriente.
+
+Ruta del grafo: account_entry → account_evaluation_engine → END
+  - account_entry              (ID LangGraph) → current_node = "ACCOUNT_INIT"
+  - account_evaluation_engine  (ID LangGraph) → current_node = "ACCOUNT_EVALUATION_ENGINE"
+"""
+
 from langchain_core.messages import AIMessage
 from app.graph.state import FluxState
 from app.infra.supabase import update_application_semaphores
 
 
+# ── ACCOUNT_ENTRY (account_entry) ────────────────────────────
+
 def account_entry_node(state: FluxState) -> dict:
     """
     Nodo ACCOUNT_INIT: punto de entrada al flujo de Cuenta Corriente.
 
-    RESET: Limpia collecting_data["account_profile"].
+    ID LangGraph : account_entry
+    current_node : ACCOUNT_INIT   ← valor semántico para GPS y Supabase
+
+    PROCESO:
+        1. Handshake: Verificar que product_intent == "ACCOUNT".
+        2. Reset: Limpiar account_profile.
+        3. Saludo personalizado con datos de preparation_data.
+        4. Actualizar semáforo: ACCOUNT_INIT / SUCCESS / PENDING.
+
+    OUTPUT:
+        - messages: Saludo de bienvenida al flujo de cuenta.
+        - session["current_node"]: "ACCOUNT_INIT".
+        - collecting_data["account_profile"]: {} (limpio).
     """
     prep = state.get("preparation_data", {})
     session = state.get("session", {})
@@ -19,29 +43,32 @@ def account_entry_node(state: FluxState) -> dict:
         f"Para asignarte la mejor categoría, cuéntame: ¿cuál es tu renta líquida mensual?"
     )
 
-    # Actualizamos semáforo para notificar que el Nodo de Inicio del Flujo terminó
     application_id = session.get("application_id")
-    
     if application_id:
         update_application_semaphores(
             application_id=application_id,
-            current_node_id="ACCOUNT_INIT", # Cambia según el nodo
-            node_status="SUCCESS",       # Avisamos que el INIT terminó
-            engine_status="PENDING"      # El motor de producto aún no arranca
+            current_node_id="ACCOUNT_INIT",
+            node_status="SUCCESS",
+            engine_status="PENDING",
         )
 
     return {
         "messages": [AIMessage(content=msg)],
         "session": {**session, "current_node": "ACCOUNT_INIT"},
         "collecting_data": {
-            "account_profile": {},   # Reset del namespace de cuenta
+            "account_profile": {},
         },
     }
 
 
+# ── ACCOUNT_EVALUATION_ENGINE (account_evaluation_engine) ────
+
 def account_evaluation_engine_node(state: FluxState) -> dict:
     """
     Nodo ACCOUNT_EVALUATION_ENGINE: motor de evaluación para cuenta corriente.
+
+    ID LangGraph : account_evaluation_engine
+    current_node : ACCOUNT_EVALUATION_ENGINE   ← valor semántico para GPS y Supabase
 
     INPUT (State leído):
         - state["collecting_data"]["account_profile"]: renta, antiguedad_laboral, nivel_estudios
@@ -51,33 +78,29 @@ def account_evaluation_engine_node(state: FluxState) -> dict:
         1. Extraer inputs de los namespaces correctos.
         2. Invocar al motor de evaluación comercial (modules/account_eng.py).
         3. Escribir todos los outputs en evaluation_results["account_engine"].
+        4. Actualizar semáforo: ACCOUNT_EVALUATION_ENGINE / SUCCESS / COMPLETED.
 
-    OUTPUT (campos del State que modifica):
+    OUTPUT:
         - evaluation_results["account_engine"]: Resultado completo del motor.
         - session["current_node"]: "ACCOUNT_EVALUATION_ENGINE".
 
-    NOTA DE ARQUITECTURA: 
-    Este nodo es un wrapper de flujo. La complejidad del cálculo está delegada
-    a módulos externos para asegurar testabilidad y desacoplamiento.
+    NOTA ARQUITECTURA:
+        Wrapper de flujo. La lógica de categorización está delegada a
+        modules/account_eng.py para asegurar testabilidad.
     """
     session = state.get("session", {})
     prep = state.get("preparation_data", {})
     collecting = state.get("collecting_data", {})
 
-    # ── Lectura de inputs desde los namespaces correctos ──────────
     account_profile = collecting.get("account_profile", {})
     renta = account_profile.get("renta", 0)
     antiguedad_laboral = account_profile.get("antiguedad_laboral", 0)
     nivel_estudios = account_profile.get("nivel_estudios", "")
     edad = prep.get("edad", 0)
 
-    # ── Lógica del motor (Orquestación) ──────────────────────────
-    # TODO: En Fase 3, delegar este cálculo a:
-    # engine_result = account_eng.calculate_account_category(renta, antiguedad, nivel, edad)
-
-    # Por ahora, stub de cumplimiento arquitectónico:
+    # TODO Fase 3: engine_result = account_eng.calculate_account_category(...)
     engine_result = {
-        "status_proceso": "PRE_APPROVED", # Stub
+        "status_proceso": "PRE_APPROVED",
         "is_elegible": True,
         "base_category": "ADVANCE",
         "final_category": "ADVANCE",
@@ -87,15 +110,13 @@ def account_evaluation_engine_node(state: FluxState) -> dict:
         "motivo_rechazo": None,
     }
 
-    # ── Sincronía ──────────────────────────────
-    # Notificamos que el procesamiento del motor ha terminado con éxito
     application_id = session.get("application_id")
     if application_id:
         update_application_semaphores(
             application_id=application_id,
             current_node_id="ACCOUNT_EVALUATION_ENGINE",
-            node_status="SUCCESS",  # El nodo finalizó su ejecución
-            engine_status="COMPLETED"  # El motor terminó su proceso
+            node_status="SUCCESS",
+            engine_status="COMPLETED",
         )
 
     return {

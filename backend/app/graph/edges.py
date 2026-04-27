@@ -7,6 +7,11 @@ PROCESO: Define las funciones que LangGraph usa como Conditional Edges
          para decidir, basándose en el State, qué nodo ejecutar a continuación.
 
 SALIDA:  Funciones que retornan el nombre del próximo nodo como string.
+
+NOTA DE NOMENCLATURA:
+  Los strings que retornan estas funciones son IDs de nodo LangGraph (snake_case).
+  Deben coincidir exactamente con los nombres registrados en workflow.py.
+  Ver la tabla de nomenclatura en workflow.py para el mapeo completo.
 """
 
 from app.graph.state import FluxState
@@ -14,23 +19,23 @@ from app.graph.state import FluxState
 
 def route_after_welcome(state: FluxState) -> str:
     """
-    Función de ruteo ejecutada después de WELCOME_NODE.
+    Función de ruteo ejecutada después de WELCOME_NODE (ID: welcome).
 
     INPUT (State): state["session"]["product_intent"]
     PROCESO: Si ya se detectó una intención (sesión reanudada), redirigir
              directamente al nodo de entrada del producto. Si no, ir al router.
-    OUTPUT: Nombre del nodo destino como string.
+    OUTPUT: ID de nodo LangGraph (snake_case) como string.
     """
     session = state.get("session", {})
     product_intent = session.get("product_intent")
 
     # Si ya había intención detectada (sesión reanudada), reanudar el flujo
     if product_intent == "LOAN":
-        return "loan_entry"   # Placeholder: en Fase 2 será LOAN_INIT
+        return "loan_entry"
     elif product_intent == "ACCOUNT":
-        return "account_entry"  # Placeholder: en Fase 3 será ACCOUNT_INIT
+        return "account_entry"
     elif product_intent == "DAP":
-        return "dap_entry"    # Placeholder: en Fase 3 será DAP_INIT
+        return "dap_entry"
 
     # Sin intención previa → ir al clasificador
     return "intent_router"
@@ -42,9 +47,7 @@ def route_after_intent(state: FluxState) -> str:
 
     INPUT (State): state["session"]["product_intent"]
     PROCESO: Dirige al nodo de entrada del producto correspondiente.
-             En Fase 1, los nodos de producto son stubs que solo confirman
-             la intención detectada.
-    OUTPUT: Nombre del nodo destino como string.
+    OUTPUT: ID de nodo LangGraph (snake_case) como string.
     """
     session = state.get("session", {})
     product_intent = session.get("product_intent", "GENERAL")
