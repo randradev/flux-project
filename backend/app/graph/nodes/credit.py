@@ -8,12 +8,66 @@ Ruta del grafo: loan_init → loan_risk_engine → END
   - loan_risk_engine  (ID LangGraph) → current_node = "LOAN_RISK_ENGINE"
 """
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from app.infra.gemini_client import get_structured_model
 from app.graph.state import FluxState
+from app.graph.nodes.schemas.loan_schemas import LoanProfileExtraction, LoanSimExtraction
 from app.infra.supabase import update_application_semaphores
 
+# ======================================================================================================
+# LLM Y PROMPTS
+# ======================================================================================================
 
-# ── LOAN_INIT (loan_init) ───────────────────────────────────
+# ── CONFIGURACIÓN DE INTELIGENCIA (SINGLETONS) ──────────────
+# Usamos get_structured_model para instanciar Gemini con salida validada.
+
+_profile_extractor = get_structured_model(LoanProfileExtraction)
+_sim_extractor     = get_structured_model(LoanSimExtraction)
+
+
+# ── SYSTEM PROMPTS (IDENTIDAD FLUX + REGLAS) ────────────────
+
+# ── 1. IDENTIDAD CORE (Reutilizable en todo el bot)
+FLUX_IDENTITY = (
+    "Eres Flux, el genio amigable de las finanzas en Chile. "
+    "Hablas de tú, eres cercano, ágil y traduces la burocracia a lenguaje humano. "
+    "Entiendes perfectamente el contexto chileno y modismos locales."
+)
+
+# ── 2. REGLAS DE EXTRACCIÓN (Solo para nodos de captura)
+# Estas reglas son comunes para Profile y Simulación (dinero/tiempo)
+EXTRACTION_RULES = (
+    "REGLAS DE NORMALIZACIÓN:\n"
+    "- 'palo' = 1.000.000 | 'luca' = 1.000.\n"
+    "- Convierte años a meses (ej: '2 años' = 24).\n"
+    "- Si un dato no fue mencionado, déjalo como null.\n"
+    "- No inventes datos que el usuario no haya dicho."
+)
+
+# ── 3. SYSTEM PROMPTS ESPECÍFICOS POR NODO
+
+# Para LOAN_COLLECTING_PROFILE
+SYSTEM_PROMPT_PROFILE = f"""
+{FLUX_IDENTITY}
+TAREA: Analiza el mensaje e identifica los datos del PERFIL financiero.
+{EXTRACTION_RULES}
+- Normaliza estudios a: POSTGRADO, UNIVERSITARIO, TECNICO o MEDIA.
+Extrae: renta mensual, antigüedad laboral (meses) y nivel estudios.
+"""
+
+# Para LOAN_COLLECTING_SIMULATION
+SYSTEM_PROMPT_SIM = f"""
+{FLUX_IDENTITY}
+TAREA: Analiza el mensaje e identifica los datos de la SIMULACIÓN.
+{EXTRACTION_RULES}
+Extrae: monto solicitado y cuotas (plazo).
+"""
+
+# ======================================================================================================
+# NODOS DEL FLUJO DE CREDITO DE CONSUMO
+# ======================================================================================================
+
+# ── 1. NODO INICIAL (loan_init) ───────────────────────────────────
 
 def loan_init_node(state: FluxState) -> dict:
     """
@@ -75,7 +129,88 @@ def loan_init_node(state: FluxState) -> dict:
     }
 
 
-# ── LOAN_RISK_ENGINE (loan_risk_engine) ───────────────────────
+# ── 2. NODO DE RECOLECCION PERFIL (loan_collecting_profile) ───────────────────────────────────
+
+def loan_collecting_profile_node(state: FluxState) -> dict:
+    """
+    Nodo LOAN_COLLECTING_PROFILE: extrae renta, antigüedad y nivel de estudios.
+
+    ID LangGraph : loan_collecting_profile
+    current_node : LOAN_COLLECTING_PROFILE
+
+    MODO A (Extracción exitosa):
+        - Actualiza collecting_data["loan_profile"] con los datos extraídos.
+        - No emite mensaje (el grafo avanza silenciosamente si todos los datos están presentes).
+        - Si faltan datos: emite re-pregunta específica.
+
+    MODO B (Re-pregunta):
+        - Conserva los datos ya recolectados en el State (merge, no reemplaza).
+        - Retorna mensaje empático solicitando el dato faltante.
+
+    NOTA DE PERSISTENCIA:
+        El merge de datos es crítico para el Checkpointer. Si el usuario
+        da la renta en un mensaje y la antigüedad en otro, ambos deben
+        acumularse en loan_profile, no sobreescribirse.
+    """
+    # 1. Extracción de variables
+    session = state.get("session", {})
+    collecting = state.get("collecting_data", {})
+    messages = state.get("messages", [])
+    current_profile = collecting.get("loan_profile", {}) # datos previos
+
+    # 2. Captura del último mensaje del usuario
+    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+
+    # 3. Invocación de Gemini para extracción
+    extracted = _profile_extractor.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_PROFILE},
+        {"role": "user",   "content": last_user_msg},
+    ])
+    
+    # 4. Merge defensivo: solo actualizar campos que llegaron con valor (evita borrar 0 por None)
+    updated_profile = {**current_profile}
+    if extracted.renta is not None: 
+        updated_profile["renta"] = extracted.renta
+    if extracted.antiguedad_laboral is not None: 
+        updated_profile["antiguedad_laboral"] = extracted.antiguedad_laboral
+    if extracted.nivel_estudios is not None: 
+        updated_profile["nivel_estudios"] = extracted.nivel_estudios
+
+    # 5. Determinar campos faltantes
+    missing = [f for f in ["renta", "antiguedad_laboral", "nivel_estudios"] if not updated_profile.get(f)]
+
+    # 6. Preparar la respuesta base
+    output = {
+        "collecting_data": {**collecting, "loan_profile": updated_profile},
+        "session": {**session, "current_node": "LOAN_COLLECTING_PROFILE"}
+    }
+
+    application_id = session.get("application_id") 
+
+    if not missing:
+        # ÉXITO: Actualizamos Supabase y avanzamos silenciosamente
+        if application_id:
+            update_application_semaphores(
+                application_id=application_id,
+                current_node_id="LOAN_COLLECTING_PROFILE",
+                node_status="SUCCESS",
+                engine_status="PENDING",
+            )
+        return output
+    
+    else:
+        # RE-PREGUNTA CON CONTEXTO: Añadimos mensaje de Flux al output
+        re_ask_msg = _build_flux_reprompt(missing, updated_profile, "perfil")
+        output["messages"] = [AIMessage(content=re_ask_msg)]
+        return output
+            
+# ── 3. NODO DE RECOLECCION MONTO Y PLAZO (loan_collecting_simulation) ───────────────────────────────────
+
+def loan_collecting_simulation_node(state: FluxState) -> dict:
+    pass    
+
+
+# ── 4. NODO DE CÁLCULO DE RIESGO (loan_risk_engine) ───────────────────────
 
 def loan_risk_engine_node(state: FluxState) -> dict:
     """
@@ -146,3 +281,55 @@ def loan_risk_engine_node(state: FluxState) -> dict:
         },
         "session": {**session, "current_node": "LOAN_RISK_ENGINE"},
     }
+
+# ======================================================================================================
+# NODOS DEL FLUJO DE CREDITO DE CONSUMO
+# ======================================================================================================
+
+# ── HELPERS DE RECOLECCIÓN (UTILITIES) ──────────────────────
+
+# ── Obtener campos faltantes del perfil
+def _get_missing_profile_fields(profile: dict) -> list[str]:
+    """Retorna lista de campos requeridos que aún no tienen valor."""
+    required = ["renta", "antiguedad_laboral", "nivel_estudios"]
+    # Usamos 'is None' para ser precisos con los datos del LLM
+    return [f for f in required if profile.get(f) is None]
+
+# ── Gestionar re-preguntas con contexto
+def _build_flux_reprompt(missing: list[str], known: dict, context: str) -> str:
+    """
+    Helper Unificado de Tono Flux.
+    Reconoce lo que ya sabemos y pide lo que falta con cercanía chilena.
+    """
+    # 1. Etiquetas amigables para los datos
+    labels = {
+        "renta": "tu renta líquida",
+        "antiguedad_laboral": "hace cuánto trabajas ahí",
+        "nivel_estudios": "tu nivel de estudios",
+        "monto_solicitado": "cuánta plata necesitas",
+        "plazo_solicitado": "en cuántas cuotas quieres pagar"
+    }
+
+    # 2. Construcción del reconocimiento (Lo que ya tenemos)
+    known_parts = []
+    if known.get("renta"):
+        known_parts.append(f"tu renta de ${known['renta']:,}")
+    if known.get("antiguedad_laboral"):
+        known_parts.append(f"tus {known['antiguedad_laboral']} meses en la pega")
+    if known.get("nivel_estudios"):
+        known_parts.append(f"tus estudios ({known['nivel_estudios'].capitalize()})")
+    if known.get("monto_solicitado"):
+        known_parts.append(f"los ${known['monto_solicitado']:,} que pides")
+    if known.get("plazo_solicitado"):
+        known_parts.append(f"el plazo de {known['plazo_solicitado']} meses")
+
+    # 3. Construcción de la frase
+    missing_labels = [labels[f] for f in missing]
+    missing_str = " y ".join(missing_labels)
+
+    if not known_parts:
+        # Caso cuando no ha entregado nada aún en este contexto
+        return f"¡Ya! Para seguir con tu {context}, cuéntame: ¿Cuál es {missing_str}?"
+    
+    known_str = " y ".join(known_parts)
+    return f"¡Buenísimo! Ya anoté {known_str}. Solo me falta saber {missing_str} para tener todo listo."
