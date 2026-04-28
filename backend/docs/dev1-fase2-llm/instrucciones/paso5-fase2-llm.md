@@ -1,3 +1,19 @@
+## PASO 5 — Corrección del Playground
+
+> **Objetivo:** Hacer que el playground sea un reflejo fiel del entorno de producción para que los tests manuales tengan validez real.
+
+---
+
+### Sub-paso 5.1 — Refactorizar `loan_playground.py` [CÓDIGO]
+
+**Archivo:** `backend/scratch/loan_playground.py`
+
+Los problemas del playground original:
+1. Limpia el historial en cada turno (`state["messages"] = [...]`), eliminando el contexto que el nodo usa.
+2. No inyecta el mensaje inicial del bot (simulando `loan_init_node`), por lo que el generador no tiene conversación previa.
+3. El merge manual usa `.update()`, que sobreescribe todo el perfil en lugar de hacer merge campo por campo.
+
+```python
 """
 backend/scratch/loan_playground.py
 ─────────────────────────────────────────────────────────────
@@ -99,3 +115,36 @@ while True:
     print(f"  [DEBUG] Cambios turno  : {profile_diff if profile_diff else '(sin cambios)'}")
     print(f"  [DEBUG] Mensajes total : {len(state['messages'])}")
     print(f"  {'─'*50}\n")
+```
+
+---
+
+**✅ CRITERIO PASS Sub-paso 5.1** [TEST-MANUAL — requiere credenciales]:
+
+Ejecutar el playground con la siguiente secuencia y verificar los resultados esperados:
+
+```
+TURNO 1
+  Tú: Hola!
+  Esperado: Flux responde de forma empática y redirige. loan_profile = {}
+
+TURNO 2
+  Tú: Gano 2 palos mensuales
+  Esperado: Flux celebra la renta y pide antigüedad. loan_profile = {"renta": 2000000}
+
+TURNO 3
+  Tú: ¿Qué es el CAE?
+  Esperado: Flux reconoce la pregunta, redirige. loan_profile sin cambios.
+
+TURNO 4
+  Tú: Llevo 3 años en la pega
+  Esperado: Flux celebra y pide estudios. loan_profile = {"renta": 2000000, "antiguedad_laboral": 36}
+
+TURNO 5
+  Tú: Soy universitario
+  Esperado: "⚡ Avance silencioso". loan_profile = {"renta": 2000000, "antiguedad_laboral": 36, "nivel_estudios": "UNIVERSITARIO"}
+```
+
+Cada turno debe verificarse contra el `[DEBUG] Perfil actual` impreso en consola.
+
+---

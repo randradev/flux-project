@@ -2,12 +2,14 @@
 Esquemas Pydantic para extracción estructurada en nodos de Crédito.
 Usados con LLM.with_structured_output() en los nodos COLLECTING.
 
-DISEÑO: Los campos son Optional con None como default.
-        Un campo None significa "no fue mencionado en el mensaje".
-        El nodo evalúa qué campos faltan y decide si avanzar o re-preguntar.
+DISEÑO v2.1:
+  - Campos Optional con None como default (campo ausente = None).
+  - Validadores @field_validator normalizan valores centinela del LLM a None.
+  - Campo `intencion` para pre-filtro de mensajes no procesables.
+  - El nodo evalúa qué campos faltan y decide si avanzar o re-preguntar.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Literal
 
 
@@ -16,28 +18,67 @@ class LoanProfileExtraction(BaseModel):
     Schema para LOAN_COLLECTING_PROFILE.
     Mapea directamente a collecting_data["loan_profile"].
     """
+
+    intencion: Literal["DATO_FINANCIERO", "PREGUNTA", "SALUDO", "OTRO"] = Field(
+        description=(
+            "Clasificación del mensaje antes de extraer datos: "
+            "DATO_FINANCIERO si contiene renta, antigüedad laboral o nivel de estudios. "
+            "PREGUNTA si el usuario hace una consulta (¿qué es el CAE?, ¿cómo funciona?). "
+            "SALUDO si es un saludo, despedida o frase social sin datos financieros. "
+            "OTRO para mensajes fuera de contexto que no encajan en las anteriores."
+        )
+    )
     renta: Optional[int] = Field(
         default=None,
-        description="Renta líquida mensual en CLP. Ej: 'gano 1 millón' → 1000000, 'gano 3 palos' → 3000000, 'me pagan 800 lucas' → 800000."
+        description=(
+            "Renta líquida mensual en CLP (entero positivo). "
+            "Normalizar: 'gano 1 millón' → 1000000, 'gano 3 palos' → 3000000, "
+            "'me pagan 800 lucas' → 800000. "
+            "Si no fue mencionado, retornar null."
+        )
     )
     antiguedad_laboral: Optional[int] = Field(
         default=None,
-        description="Antigüedad laboral en MESES. Convertir años a meses. Ej: '2 años' → 24, 'llevo 5 años en la pega' → 60."
+        description=(
+            "Antigüedad laboral en MESES (entero >= 0). "
+            "Convertir: '2 años' → 24, 'llevo 5 años en la pega' → 60, "
+            "'recién comencé' → 0. "
+            "Si no fue mencionado, retornar null."
+        )
     )
     nivel_estudios: Optional[Literal["POSTGRADO", "UNIVERSITARIO", "TECNICO", "MEDIA"]] = Field(
         default=None,
         description=(
-            "Nivel de estudios normalizado. "
-            "'ingeniería', 'universidad', 'carrera', 'profesional', 'titulado', 'egresado', 'licenciado' → UNIVERSITARIO. "
-            "'magíster', 'doctorado', 'postgrado', 'MBA', 'máster', 'especialidad médica' → POSTGRADO. "
-            "'técnico', 'ip', 'cft', 'inacap', 'duoc', 'instituto profesional', 'centro de formación técnica' → TECNICO. "
-            "'media', 'liceo', 'cuarto medio', 'colegio', 'escuela', 'enseñanza media' → MEDIA."
+            "Nivel de estudios normalizado al Literal exacto. "
+            "'ingeniería', 'universidad', 'carrera', 'profesional' → UNIVERSITARIO. "
+            "'magíster', 'doctorado', 'postgrado', 'MBA' → POSTGRADO. "
+            "'técnico', 'ip', 'cft', 'inacap', 'duoc' → TECNICO. "
+            "'media', 'liceo', 'cuarto medio', 'colegio' → MEDIA. "
+            "Si no fue mencionado, retornar null."
         )
     )
-    datos_completos: bool = Field(
-        default=False,
-        description="True solo si los tres campos anteriores fueron mencionados explícitamente."
-    )
+
+    @field_validator("renta")
+    @classmethod
+    def renta_must_be_positive(cls, v: Optional[int]) -> Optional[int]:
+        """
+        Normaliza a None si el LLM retornó un valor centinela no positivo.
+        El LLM usa 0 como 'no sé pero debo dar un int'.
+        """
+        if v is not None and v <= 0:
+            return None
+        return v
+
+    @field_validator("antiguedad_laboral")
+    @classmethod
+    def antiguedad_must_be_non_negative(cls, v: Optional[int]) -> Optional[int]:
+        """
+        Normaliza a None si el LLM retornó -1 (centinela clásico para int ausente).
+        Nota: 0 meses es válido (usuario recién comenzó a trabajar).
+        """
+        if v is not None and v < 0:
+            return None
+        return v
 
 
 class LoanSimExtraction(BaseModel):
@@ -45,21 +86,35 @@ class LoanSimExtraction(BaseModel):
     Schema para LOAN_COLLECTING_SIMULATION.
     Mapea directamente a collecting_data["loan_sim"].
     """
+
+    intencion: Literal["DATO_FINANCIERO", "PREGUNTA", "SALUDO", "OTRO"] = Field(
+        description=(
+            "DATO_FINANCIERO si contiene monto o plazo del crédito. "
+            "PREGUNTA, SALUDO u OTRO para el resto."
+        )
+    )
     monto_solicitado: Optional[int] = Field(
         default=None,
         description=(
-            "Monto del crédito en CLP (entero). "
-            "Normalizar expresiones: '5 millones' → 5000000, '$3.500.000' → 3500000, 'un palo' → 1000000, '800 lucas' → 800000."
+            "Monto del crédito en CLP (entero positivo). "
+            "Normalizar: '5 millones' → 5000000, '$3.500.000' → 3500000, "
+            "'un palo' → 1000000, '800 lucas' → 800000. "
+            "Si no fue mencionado, retornar null."
         )
     )
     plazo_solicitado: Optional[int] = Field(
         default=None,
         description=(
-            "Número de cuotas (meses). Rango válido: 6-48. "
-            "Si el usuario dice 'años', convertir: '2 años' → 24."
+            "Número de cuotas en meses (entero positivo). "
+            "Convertir: '2 años' → 24, '1 año y medio' → 18. "
+            "Si no fue mencionado, retornar null."
         )
     )
-    datos_completos: bool = Field(
-        default=False,
-        description="True solo si monto y plazo fueron mencionados explícitamente."
-    )
+
+    @field_validator("monto_solicitado", "plazo_solicitado")
+    @classmethod
+    def must_be_positive(cls, v: Optional[int]) -> Optional[int]:
+        """Normaliza a None cualquier valor centinela no positivo."""
+        if v is not None and v <= 0:
+            return None
+        return v

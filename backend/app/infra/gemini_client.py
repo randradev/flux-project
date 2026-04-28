@@ -81,23 +81,52 @@ def get_chat_model() -> ChatVertexAI:
 
 def get_structured_model(schema) -> ChatVertexAI:
     """
-    Retorna el modelo de chat con salida estructurada (for entity extraction).
-
-    INPUT:  schema — Pydantic BaseModel o TypedDict que define la estructura esperada.
-    PROCESO: Usa with_structured_output para que el LLM devuelva JSON validado.
-    OUTPUT: Modelo con structured output configurado.
-
-    Uso en nodos de recolección: `model = get_structured_model(RentaSchema)`
+    Llamada A — Extractor de entidades financieras.
+    
+    Configuración optimizada para extracción de máxima fidelidad:
+      - temperature=0.0: Sin variabilidad. El modelo reporta lo que vio, no infiere.
+      - method="function_calling": Enforza null para campos Optional no mencionados.
+        A diferencia de json_mode (que genera JSON libre y puede alunar centinelas),
+        function_calling hace que el SDK valide el output contra el schema Pydantic.
+    
+    USO: Invocado una vez por turno en los nodos COLLECTING.
+         Solo extrae. No genera texto conversacional.
     """
     _init_global()
     base_model = ChatVertexAI(
         model_name="gemini-3-flash-preview",
         project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,  # Restauramos la referencia lógica
-        api_endpoint="aiplatform.googleapis.com", # <--- OBLIGATORIO para evitar el 404
-        temperature=0.1,  # Mínima temperatura para extracción precisa
+        location=settings.google_cloud_location,
+        api_endpoint="aiplatform.googleapis.com",
+        temperature=0.0,  # CRÍTICO: 0.0 para extracción. No 0.1.
+        max_output_tokens=512,  # La extracción es concisa; limitar tokens reduce costo.
     )
-    return base_model.with_structured_output(schema)
+    return base_model.with_structured_output(schema, method="function_calling")
+
+
+def get_generation_model() -> ChatVertexAI:
+    """
+    Llamada B — Generador de respuestas conversacionales de Flux.
+    
+    Configuración optimizada para generación con personalidad:
+      - temperature=0.7: Permite variabilidad natural en las respuestas.
+        Flux no debe sonar robótico ni repetitivo entre sesiones.
+      - Sin structured_output: Genera texto libre.
+    
+    USO: Invocado UNA VEZ por turno, después del extractor, solo cuando
+         el nodo necesita emitir un mensaje al usuario (re-pregunta o
+         respuesta a intención no-financiera).
+         No se invoca en avance silencioso.
+    """
+    _init_global()
+    return ChatVertexAI(
+        model_name="gemini-3-flash-preview",
+        project=settings.google_cloud_project_id,
+        location=settings.google_cloud_location,
+        api_endpoint="aiplatform.googleapis.com",
+        temperature=0.7,
+        max_output_tokens=1024,
+    )
 
 
 def get_embeddings_model() -> VertexAIEmbeddings:
