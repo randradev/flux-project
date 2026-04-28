@@ -13,6 +13,7 @@ from app.infra.gemini_client import get_structured_model, get_generation_model
 from app.graph.state import FluxState
 from app.graph.nodes.schemas.loan_schemas import LoanProfileExtraction, LoanSimExtraction
 from app.infra.supabase import update_application_semaphores
+from app.utils.llm_utils import normalize_llm_response
 
 # ======================================================================================================
 # LLM Y PROMPTS
@@ -294,9 +295,12 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
         {"role": "user",   "content": context},
     ])
 
+    # Normalizar ANTES de guardar en el State
+    clean_content = normalize_llm_response(flux_response.content)
+
     # 9. ------ RETURN TRANSACCIONAL ------
     # Un único return con todos los cambios al State.
-    output["messages"] = [AIMessage(content=flux_response.content)]
+    output["messages"] = [AIMessage(content=clean_content)]
     return output
             
 # ── 3. NODO DE RECOLECCION MONTO Y PLAZO (loan_collecting_simulation) ───────────────────────────────────
