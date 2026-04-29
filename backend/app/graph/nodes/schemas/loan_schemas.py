@@ -89,9 +89,15 @@ class LoanSimExtraction(BaseModel):
 
     intencion: Literal["DATO_FINANCIERO", "PREGUNTA", "SALUDO", "OTRO"] = Field(
         description=(
-            "DATO_FINANCIERO si contiene monto o plazo del crédito. "
-            "PREGUNTA, SALUDO u OTRO para el resto."
+            "Clasificación del mensaje antes de extraer datos: "
+            "DATO_FINANCIERO si contiene monto solicitado o plazo solicitado. "
+            "PREGUNTA si el usuario hace una consulta (¿qué es el CAE?, ¿cómo funciona?). "
+            "SALUDO si es un saludo, despedida o frase social sin datos financieros. "
+            "OTRO para mensajes fuera de contexto que no encajan en las anteriores."
         )
+    )
+    razonamiento: str = Field(
+        description="Justifica brevemente por qué extraes o dejas en null cada campo basándote SOLO en el mensaje actual."
     )
     monto_solicitado: Optional[int] = Field(
         default=None,

@@ -60,17 +60,25 @@ INSTRUCCIONES:
 """
 
 SYSTEM_PROMPT_EXTRACTION_SIM = """
-Eres un motor de extracción de datos financieros. Tu única función es analizar el mensaje del usuario y retornar un JSON estructurado.
+Eres un motor de extracción de datos financieros. Tu función es analizar el mensaje del usuario y retornar un JSON estructurado.
 
 INSTRUCCIONES:
-1. Clasifica el mensaje en `intencion`: DATO_FINANCIERO si contiene monto o plazo del crédito. PREGUNTA, SALUDO u OTRO para el resto.
-
-2. Extrae monto_solicitado y plazo_solicitado SOLO si fueron mencionados:
-   - "palo" = 1.000.000 | "luca" = 1.000
-   - Años a meses para el plazo.
-
-3. REGLA ABSOLUTA: null para cualquier dato no mencionado.
+1. Clasifica la `intencion` (DATO_FINANCIERO, PREGUNTA, SALUDO, OTRO).
+2. Usa el campo `razonamiento` para explicar qué datos ves en el mensaje. Si un dato no está, decláralo ahí (ej: "No se menciona monto").
+3. Basándote en ese razonamiento, llena los campos `monto_solicitado` y `plazo_solicitado`. 
+4. REGLA DE ORO: Si el dato no está explícito, el valor DEBE ser 0. 
+   Prohibido inventar o inferir montos. 
+   RECUERDA: Si no lo dice -> 0.
+EJEMPLO:
+Usuario: "En 12 cuotas"
+-> {
+    "intencion": "DATO_FINANCIERO",
+    "razonamiento": "El usuario indica 12 cuotas pero no menciona monto.",
+    "monto_solicitado": 0,
+    "plazo_solicitado": 12
+}
 """
+
 
 # ── PROMPT LLAMADA B: GENERACIÓN ────────────────────────────────────────────
 # Recibe contexto estructurado e inyecta personalidad Flux.
@@ -86,6 +94,24 @@ PERSONALIDAD:
 - Si el usuario da información fuera de contexto, lo rediriges con gracia, sin regañar.
 
 TAREA ACTUAL: Recolección de perfil financiero para un Crédito de Consumo.
+
+RESTRICCIONES:
+- NO inventes datos. Trabaja solo con lo que el contexto te provee.
+- NO menciones números técnicos ni tasas en este paso (eso viene después).
+- NO hagas más de UNA pregunta a la vez. Pide un dato, no tres.
+- Máximo 3 oraciones en tu respuesta.
+"""
+
+SYSTEM_PROMPT_GENERATION_SIM = """
+Eres Flux, el genio amigable de las finanzas en Chile.
+
+PERSONALIDAD:
+- Hablas de tú, eres cercano y usas modismos chilenos con moderación.
+- Eres ágil: no das rodeos innecesarios, pero sí eres empático.
+- Celebras cuando el usuario entrega datos (¡Buenazo!, ¡Perfecto!, ¡Anotado!).
+- Si el usuario da información fuera de contexto, lo rediriges con gracia, sin regañar.
+
+TAREA ACTUAL: Recolección de monto y plazo del crédito.
 
 RESTRICCIONES:
 - NO inventes datos. Trabaja solo con lo que el contexto te provee.
@@ -213,7 +239,7 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
     # Guardrail: si no hay mensaje del usuario, re-preguntar desde el estado actual
     if not last_user_msg.strip():
         missing = _get_missing_profile_fields(current_profile)
-        context = _build_generation_context(
+        context = _build_profile_generation_context(
             nombre=first_name,
             intencion="OTRO",
             known_profile=current_profile,
@@ -282,7 +308,7 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
         return output # ← Return transaccional sin mensajes
     
     # 8. ------ LLAMADA B - GENERACIÓN ------
-    context = _build_generation_context(
+    context = _build_profile_generation_context(
         nombre=first_name,
         intencion=extracted.intencion,
         known_profile=updated_profile,
@@ -305,8 +331,79 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
             
 # ── 3. NODO DE RECOLECCION MONTO Y PLAZO (loan_collecting_simulation) ───────────────────────────────────
 
-def loan_collecting_simulation_node(state: FluxState) -> dict:
-    pass    
+def loan_collecting_sim_node(state: FluxState) -> dict:
+    """
+    Nodo LOAN_COLLECTING_SIMULATION: recolección de monto y plazo.
+    Aplica arquitectura de Doble Llamada y normalización de salida.
+    """
+    session    = state.get("session", {})
+    collecting = state.get("collecting_data", {})
+    prep       = state.get("preparation_data", {})
+    messages   = state.get("messages", [])
+    
+    current_sim = collecting.get("loan_sim", {})
+    first_name  = prep.get("nombre", "").split()[0] if prep.get("nombre") else "amig@"
+    
+    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+    
+    # 1. LLAMADA A - EXTRACCIÓN
+    print(f"\n[DEBUG-SIM] Mensaje Usuario: '{last_user_msg}'")
+    extracted: LoanSimExtraction = _sim_extractor.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_SIM},
+        {"role": "user",   "content": last_user_msg},
+    ])
+    print(f"[DEBUG-SIM] LLM razonamiento: {getattr(extracted, 'razonamiento', 'N/A')}")
+    print(f"[DEBUG-SIM] LLM extraccion: monto={extracted.monto_solicitado}, plazo={extracted.plazo_solicitado}")
+    
+    # 2. MERGE DEFENSIVO (Versión Robusta)
+    newly_extracted = {}
+    updated_sim = {**current_sim}
+
+    if extracted.intencion == "DATO_FINANCIERO":
+        new_monto = extracted.monto_solicitado
+        new_plazo = extracted.plazo_solicitado
+        
+        if new_monto is not None:
+            updated_sim["monto_solicitado"] = new_monto
+            newly_extracted["monto_solicitado"] = new_monto
+
+        if new_plazo is not None:
+            updated_sim["plazo_solicitado"] = new_plazo
+            newly_extracted["plazo_solicitado"] = new_plazo
+    
+    print(f"[DEBUG-SIM] State Resultante: {updated_sim}")
+    
+    # 3. EVALUACIÓN Y DECISIÓN
+    missing = _get_missing_sim_fields(updated_sim)
+    
+    output = {
+        "collecting_data": {**collecting, "loan_sim": updated_sim},
+        "session":         {**session, "current_node": "LOAN_COLLECTING_SIMULATION"},
+    }
+    
+    if not missing:
+        # Avance silencioso al motor de crédito
+        return output
+    
+    # 4. LLAMADA B - GENERACIÓN
+    context = _build_sim_generation_context(
+        nombre=first_name,
+        intencion=extracted.intencion,
+        known_sim=updated_sim,
+        missing=missing,
+        newly_extracted=newly_extracted
+    )
+    
+    flux_response = _flux_generator.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_GENERATION_SIM},
+        {"role": "user",   "content": context},
+    ])
+    
+    # Usamos la utilidad de normalización que creamos antes
+    clean_content = normalize_llm_response(flux_response.content)
+    output["messages"] = [AIMessage(content=clean_content)]
+    
+    return output   
 
 
 # ── 4. NODO DE CÁLCULO DE RIESGO (loan_risk_engine) ───────────────────────
@@ -382,7 +479,7 @@ def loan_risk_engine_node(state: FluxState) -> dict:
     }
 
 # ======================================================================================================
-# NODOS DEL FLUJO DE CREDITO DE CONSUMO
+# HELPERS DEL FLUJO DE CREDITO DE CONSUMO
 # ======================================================================================================
 
 # ── HELPERS DE RECOLECCIÓN (UTILITIES) ──────────────────────
@@ -421,8 +518,30 @@ def _get_missing_profile_fields(profile: dict) -> list[str]:
     
     return missing
 
-# ── Construir el contexto para la Llamada B (generador) ──────────────
-def _build_generation_context(
+# ── Obtener campos faltantes de simulación| v2.1 — añade validación de valores centinela del LLM
+def _get_missing_sim_fields(sim_data: dict) -> list[str]:
+    """
+    Retorna lista de campos de simulación que faltan o tienen valores inválidos.
+    
+    REGLAS:
+      - None siempre es faltante.
+      - monto_solicitado <= 0: centinela del LLM para monto ausente.
+      - plazo_solicitado <= 0: centinela del LLM para plazo ausente.
+    """
+    missing = []
+    
+    monto = sim_data.get("monto_solicitado")
+    if monto is None or monto <= 0:
+        missing.append("monto_solicitado")
+    
+    plazo = sim_data.get("plazo_solicitado")
+    if plazo is None or plazo <= 0:
+        missing.append("plazo_solicitado")
+    
+    return missing
+
+# ── Construir el contexto para la Llamada B (generador) para nodo LOAN_COLLECTING_PROFILE ──────────────
+def _build_profile_generation_context(
     nombre: str,
     intencion: str,
     known_profile: dict,
@@ -499,6 +618,62 @@ def _build_generation_context(
     Si la intención es PREGUNTA, reconoce la duda brevemente y redirige al proceso.
     """
     return context
+
+# ── Construir el contexto para la Llamada B (generador) para nodo LOAN_COLLECTING_SIMULATION ──────────────
+def _build_sim_generation_context(
+    nombre: str,
+    intencion: str,
+    known_sim: dict,
+    missing: list[str],
+    newly_extracted: dict,
+) -> str:
+    """Versión especializada para la recolección de monto y plazo."""
+    field_labels = {
+        "monto_solicitado": "monto del crédito",
+        "plazo_solicitado": "plazo en cuotas mensuales",
+    }
+    
+    known_lines = []
+    for field, label in field_labels.items():
+        value = known_sim.get(field)
+        if value is not None:
+            if field == "monto_solicitado":
+                known_lines.append(f"  - {label}: ${value:,} CLP")
+            else:
+                known_lines.append(f"  - {label}: {value} meses")
+    
+    new_lines = []
+    for field, value in newly_extracted.items():
+        if value is not None and field in field_labels:
+            label = field_labels[field]
+            if field == "monto_solicitado":
+                new_lines.append(f"  - {label}: ${value:,} CLP")
+            else:
+                new_lines.append(f"  - {label}: {value} meses")
+    
+    missing_labels = [field_labels[f] for f in missing]
+    
+    context = f"""CONTEXTO PARA TU RESPUESTA:
+    
+    Usuario: {nombre}
+    Intención detectada: {intencion}
+
+    Datos de simulación YA CONOCIDOS (no volver a pedir):
+    {chr(10).join(known_lines) if known_lines else "  - (ninguno aún)"}
+
+    Datos recién entregados en este turno (para celebrar/comentar si hay alguno):
+    {chr(10).join(new_lines) if new_lines else "  - (ninguno en este mensaje)"}
+
+    Datos que AÚN FALTAN (pide exactamente el primero de la lista, no todos):
+    {chr(10).join(f"  - {l}" for l in missing_labels) if missing_labels else "  - (completos)"}
+
+    INSTRUCCIÓN: Genera la respuesta de Flux según este contexto. 
+    Si hay datos nuevos, celébrarlos brevemente. Luego pide solo el PRIMER dato faltante.
+    Si la intención es SALUDO u OTRO, responde con empatía y redirige amablemente a pedir el primer dato faltante.
+    Si la intención es PREGUNTA, reconoce la duda brevemente y redirige al proceso.
+    """
+    return context
+
 
 # ── Gestionar re-preguntas con contexto
 def _build_flux_reprompt(missing: list[str], known: dict, context: str) -> str:
