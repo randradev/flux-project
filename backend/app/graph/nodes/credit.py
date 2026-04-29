@@ -13,6 +13,7 @@ from app.infra.gemini_client import get_structured_model, get_generation_model
 from app.graph.state import FluxState
 from app.graph.nodes.schemas.loan_schemas import LoanProfileExtraction, LoanSimExtraction
 from app.infra.supabase import update_application_semaphores
+from app.modules.credit_eng import CreditEngine, PolicyRejectionError, PaymentCapacityError
 from app.utils.llm_utils import normalize_llm_response
 
 # ======================================================================================================
@@ -41,20 +42,21 @@ FLUX_IDENTITY = (
 
 SYSTEM_PROMPT_EXTRACTION_PROFILE = """
 Eres un motor de extracción de datos financieros. Tu función es analizar el mensaje del usuario y retornar un JSON estructurado.
+
 INSTRUCCIONES:
 1. Clasifica la `intencion` (DATO_FINANCIERO, PREGUNTA, SALUDO, OTRO).
-2. Usa el campo `razonamiento` para explicar qué datos ves en el mensaje. Si un dato no está, decláralo ahí (ej: "No menciona renta").
-3. Basándote en ese razonamiento, llena los campos técnicos.
-4. REGLA DE ORO: Si un dato numérico no está explícito, el valor DEBE ser 0. Si un texto no está, null.
-   Prohibido inventar o inferir datos. RECUERDA: Si no lo dice -> 0.
+2. Usa el campo `razonamiento` para explicar qué datos ves. 
+3. REGLA DE ORO: Si un dato numérico no está explícito, el valor DEBE ser 0.
+4. Si el nivel de estudios no está, usa estrictamente 'DESCONOCIDO'.
+
 EJEMPLO:
-Usuario: "Hola, gano 800 lucas"
+Usuario: "Gano 2 millones"
 -> {
     "intencion": "DATO_FINANCIERO",
-    "razonamiento": "El usuario saluda e indica una renta de 800.000. No menciona antigüedad ni estudios.",
-    "renta": 800000,
+    "razonamiento": "El usuario indica renta de 2M. No menciona antigüedad ni estudios.",
+    "renta": 2000000,
     "antiguedad_laboral": 0,
-    "nivel_estudios": null
+    "nivel_estudios": "DESCONOCIDO"
 }
 """
 
@@ -99,9 +101,6 @@ RESTRICCIONES:
 - NO menciones números técnicos ni tasas en este paso (eso viene después).
 - NO hagas más de UNA pregunta a la vez. Pide un dato, no tres.
 - Máximo 3 oraciones en tu respuesta.
-
-REGLA DE ORO: Si un dato numérico no está explícito, el valor DEBE ser 0. 
-Si el nivel de estudios no está, usa estrictamente 'DESCONOCIDO'.
 """
 
 SYSTEM_PROMPT_GENERATION_SIM = """
@@ -441,48 +440,67 @@ def loan_risk_engine_node(state: FluxState) -> dict:
         Este nodo es un wrapper de flujo. La lógica de cálculo pesada debe residir
         en módulos independientes (modules/credit_eng.py) para facilitar tests unitarios.
     """
-    session = state.get("session", {})
-    prep = state.get("preparation_data", {})
+    # 1. ------ PREPARACIÓN DE DATOS ------
+    session    = state.get("session", {})
+    prep       = state.get("preparation_data", {})
     collecting = state.get("collecting_data", {})
-
+    
     loan_profile = collecting.get("loan_profile", {})
-    loan_sim = collecting.get("loan_sim", {})
+    loan_sim     = collecting.get("loan_sim", {})
 
-    renta = loan_profile.get("renta", 0)
-    monto_solicitado = loan_sim.get("monto_solicitado", 0)
-    plazo_solicitado = loan_sim.get("plazo_solicitado", 0)
+    try:
+        # 2. ------ LLAMADA AL MOTOR REAL ------
+        engine = CreditEngine(
+            preparation_data=prep,
+            loan_profile=loan_profile,
+            loan_sim=loan_sim
+        )
+        engine_result = engine.run()
 
-    # TODO Fase 2: engine_result = credit_eng.calculate_risk_score(...)
-    engine_result = {
-        "status_proceso": "PRE_APPROVED",
-        "scoring_puntos": 0,
-        "nivel_riesgo": "",
-        "tasa_interes_mensual": 0.0,
-        "cuota_mensual": 0,
-        "cuota_maxima_permitida": int(renta * 0.30),
-        "capacidad_pago_valida": True,
-        "ctc": 0,
-        "total_intereses": 0,
-        "cae": 0.0,
-        "monto_aprobado": monto_solicitado,
-        "plazo_aprobado": plazo_solicitado,
-        "motivo_rechazo": None,
-    }
+    except PolicyRejectionError as e:
+        # Caso: Rechazo por Edad, Renta o Antigüedad
+        engine_result = {
+            "status_proceso": "REJECTED",
+            "motivo_rechazo": e.motivo,
+            "capacidad_pago_valida": True, 
+            "monto_aprobado": 0,
+            "plazo_aprobado": 0
+        }
 
+    except PaymentCapacityError as e:
+        # Caso: La cuota supera el 30% de la renta
+        engine_result = {
+            "status_proceso": "REJECTED",
+            "motivo_rechazo": "ERR_CAPACIDAD_PAGO",
+            "capacidad_pago_valida": False,
+            "cuota_mensual": e.cuota_calculada,
+            "cuota_maxima_permitida": e.cuota_maxima,
+            "monto_aprobado": 0,
+            "plazo_aprobado": 0
+        }
+
+    except Exception as e:
+        # Error técnico inesperado
+        print(f"[ERROR-ENGINE] Fallo crítico: {str(e)}")
+        engine_result = {
+            "status_proceso": "ERROR",
+            "motivo_rechazo": "ERR_INTERNAL",
+        }
+
+    # 3. ------ PERSISTENCIA Y SEMÁFOROS ------
     application_id = session.get("application_id")
     if application_id:
+        engine_status = "SUCCESS" if engine_result["status_proceso"] != "ERROR" else "FAILED"
         update_application_semaphores(
             application_id=application_id,
             current_node_id="LOAN_RISK_ENGINE",
             node_status="SUCCESS",
-            engine_status="COMPLETED",
+            engine_status=engine_status,
         )
 
     return {
-        "evaluation_results": {
-            "loan_engine": engine_result,
-        },
-        "session": {**session, "current_node": "LOAN_RISK_ENGINE"},
+        "engine_result": engine_result,
+        "session":       {**session, "current_node": "LOAN_RISK_ENGINE"},
     }
 
 # ======================================================================================================
