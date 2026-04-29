@@ -28,6 +28,10 @@ class LoanProfileExtraction(BaseModel):
             "OTRO para mensajes fuera de contexto que no encajan en las anteriores."
         )
     )
+    razonamiento: str = Field(
+        default="",
+        description="Justifica brevemente por qué extraes o dejas en null cada campo basándote SOLO en el mensaje actual."
+    )
     renta: Optional[int] = Field(
         default=None,
         description=(
@@ -46,15 +50,15 @@ class LoanProfileExtraction(BaseModel):
             "Si no fue mencionado, retornar null."
         )
     )
-    nivel_estudios: Optional[Literal["POSTGRADO", "UNIVERSITARIO", "TECNICO", "MEDIA"]] = Field(
-        default=None,
+    nivel_estudios: Optional[Literal["POSTGRADO", "UNIVERSITARIO", "TECNICO", "MEDIA", "DESCONOCIDO"]] = Field(
+        default="DESCONOCIDO",
         description=(
             "Nivel de estudios normalizado al Literal exacto. "
             "'ingeniería', 'universidad', 'carrera', 'profesional' → UNIVERSITARIO. "
             "'magíster', 'doctorado', 'postgrado', 'MBA' → POSTGRADO. "
             "'técnico', 'ip', 'cft', 'inacap', 'duoc' → TECNICO. "
             "'media', 'liceo', 'cuarto medio', 'colegio' → MEDIA. "
-            "Si no fue mencionado, retornar null."
+            "Si no fue mencionado, retornar 'DESCONOCIDO'."
         )
     )
 
@@ -73,13 +77,18 @@ class LoanProfileExtraction(BaseModel):
     @classmethod
     def antiguedad_must_be_non_negative(cls, v: Optional[int]) -> Optional[int]:
         """
-        Normaliza a None si el LLM retornó -1 (centinela clásico para int ausente).
-        Nota: 0 meses es válido (usuario recién comenzó a trabajar).
+        Normaliza a None si el LLM retornó 0 o -1 (centinela clásico para int ausente).
         """
-        if v is not None and v < 0:
+        if v is not None and v <= 0:
             return None
         return v
 
+    @field_validator("nivel_estudios")
+    @classmethod
+    def clean_estudios(cls, v):
+        if v == "DESCONOCIDO":
+            return None
+        return v
 
 class LoanSimExtraction(BaseModel):
     """
@@ -97,6 +106,7 @@ class LoanSimExtraction(BaseModel):
         )
     )
     razonamiento: str = Field(
+        default="",
         description="Justifica brevemente por qué extraes o dejas en null cada campo basándote SOLO en el mensaje actual."
     )
     monto_solicitado: Optional[int] = Field(

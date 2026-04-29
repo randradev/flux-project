@@ -40,23 +40,22 @@ FLUX_IDENTITY = (
 # el prompt solo establece el contrato de qué retornar.
 
 SYSTEM_PROMPT_EXTRACTION_PROFILE = """
-Eres un motor de extracción de datos financieros. Tu única función es analizar el mensaje del usuario y retornar un JSON estructurado.
-
+Eres un motor de extracción de datos financieros. Tu función es analizar el mensaje del usuario y retornar un JSON estructurado.
 INSTRUCCIONES:
-1. Clasifica el mensaje en el campo `intencion`:
-   - DATO_FINANCIERO: si el mensaje contiene renta, antigüedad laboral o nivel de estudios.
-   - PREGUNTA: si el usuario hace una pregunta (¿qué es...?, ¿cómo...?, ¿cuánto...?).
-   - SALUDO: si es un saludo, despedida o frase social ("hola", "gracias", "adiós").
-   - OTRO: cualquier mensaje que no encaje en las anteriores.
-
-2. Extrae los datos SOLO si fueron mencionados explícitamente o con jerga coloquial clara:
-   - "palo" = 1.000.000 CLP | "luca" = 1.000 CLP
-   - Años a meses: 1 año = 12 meses
-   - Normaliza nivel_estudios al Literal exacto.
-
-3. REGLA ABSOLUTA: Si un dato NO fue mencionado, retorna null para ese campo.
-   No uses valores por defecto. No uses 0 ni -1 como placeholder.
-   Un saludo no contiene renta. Una pregunta no contiene antigüedad.
+1. Clasifica la `intencion` (DATO_FINANCIERO, PREGUNTA, SALUDO, OTRO).
+2. Usa el campo `razonamiento` para explicar qué datos ves en el mensaje. Si un dato no está, decláralo ahí (ej: "No menciona renta").
+3. Basándote en ese razonamiento, llena los campos técnicos.
+4. REGLA DE ORO: Si un dato numérico no está explícito, el valor DEBE ser 0. Si un texto no está, null.
+   Prohibido inventar o inferir datos. RECUERDA: Si no lo dice -> 0.
+EJEMPLO:
+Usuario: "Hola, gano 800 lucas"
+-> {
+    "intencion": "DATO_FINANCIERO",
+    "razonamiento": "El usuario saluda e indica una renta de 800.000. No menciona antigüedad ni estudios.",
+    "renta": 800000,
+    "antiguedad_laboral": 0,
+    "nivel_estudios": null
+}
 """
 
 SYSTEM_PROMPT_EXTRACTION_SIM = """
@@ -100,6 +99,9 @@ RESTRICCIONES:
 - NO menciones números técnicos ni tasas en este paso (eso viene después).
 - NO hagas más de UNA pregunta a la vez. Pide un dato, no tres.
 - Máximo 3 oraciones en tu respuesta.
+
+REGLA DE ORO: Si un dato numérico no está explícito, el valor DEBE ser 0. 
+Si el nivel de estudios no está, usa estrictamente 'DESCONOCIDO'.
 """
 
 SYSTEM_PROMPT_GENERATION_SIM = """
@@ -257,33 +259,35 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
         }
 
     # 3. ------ LLAMADA A - EXTRACCIÓN ------ 
+    print(f"\n[DEBUG-PROFILE] Mensaje Usuario: '{last_user_msg}'")
     extracted: LoanProfileExtraction = _profile_extractor.invoke([
         {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_PROFILE},
         {"role": "user",   "content": last_user_msg},
-    ])
+    ]) or LoanProfileExtraction(intencion="OTRO", razonamiento="Error")
     
-    # 4. ------  MERGE DEFENSIVO ------
-    # Solo actualizar campos que el extractor encontró en ESTE turno.
-    # Los campos None del extractor no sobreescriben datos previos del State.
-    newly_extracted = {}  # Diccionario de lo nuevo: para que Flux lo comente
+    print(f"[DEBUG-PROFILE] LLM razonamiento: {getattr(extracted, 'razonamiento', 'N/A')}")
+    print(f"[DEBUG-PROFILE] LLM extraccion: renta={extracted.renta}, antiguedad={extracted.antiguedad_laboral}, estudios={extracted.nivel_estudios}")
+
+    # 4. ------  MERGE DEFENSIVO (Versión Robusta) ------
+    newly_extracted = {}
     updated_profile = {**current_profile}
 
     if extracted.intencion == "DATO_FINANCIERO":
+        # Renta
         if extracted.renta is not None:
             updated_profile["renta"] = extracted.renta
-            if current_profile.get("renta") != extracted.renta:  # Es realmente nuevo
-                newly_extracted["renta"] = extracted.renta
+            newly_extracted["renta"] = extracted.renta
         
+        # Antigüedad
         if extracted.antiguedad_laboral is not None:
             updated_profile["antiguedad_laboral"] = extracted.antiguedad_laboral
-            if current_profile.get("antiguedad_laboral") != extracted.antiguedad_laboral:
-                newly_extracted["antiguedad_laboral"] = extracted.antiguedad_laboral
-        
+            newly_extracted["antiguedad_laboral"] = extracted.antiguedad_laboral
+            
+        # Nivel Estudios
         if extracted.nivel_estudios is not None:
             updated_profile["nivel_estudios"] = extracted.nivel_estudios
-            if current_profile.get("nivel_estudios") != extracted.nivel_estudios:
-                newly_extracted["nivel_estudios"] = extracted.nivel_estudios
-    # Si intencion != DATO_FINANCIERO: no se hace merge. current_profile se preserva intacto.
+            newly_extracted["nivel_estudios"] = extracted.nivel_estudios
+
 
     # 5. ------ EVALUACIÓN DE COMPLETITUD ------
     missing = _get_missing_profile_fields(updated_profile)
@@ -347,31 +351,34 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
     last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
     
     # 1. LLAMADA A - EXTRACCIÓN
-    print(f"\n[DEBUG-SIM] Mensaje Usuario: '{last_user_msg}'")
     extracted: LoanSimExtraction = _sim_extractor.invoke([
         {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_SIM},
         {"role": "user",   "content": last_user_msg},
-    ])
-    print(f"[DEBUG-SIM] LLM razonamiento: {getattr(extracted, 'razonamiento', 'N/A')}")
-    print(f"[DEBUG-SIM] LLM extraccion: monto={extracted.monto_solicitado}, plazo={extracted.plazo_solicitado}")
+    ]) or LoanSimExtraction(intencion="OTRO", razonamiento="Error")
+
     
     # 2. MERGE DEFENSIVO (Versión Robusta)
     newly_extracted = {}
     updated_sim = {**current_sim}
 
     if extracted.intencion == "DATO_FINANCIERO":
+        # Extraemos lo que el LLM dice haber encontrado
         new_monto = extracted.monto_solicitado
         new_plazo = extracted.plazo_solicitado
+
+        # REGLA DE ORO: Solo actualizamos si el LLM detectó ALGO nuevo (no es None)
+        # y aplicamos una política de "Solo Sobreescribir si es explícito"
         
         if new_monto is not None:
+            # Aquí puedes decidir: ¿Si ya tengo monto, dejo que el LLM lo cambie?
+            # En simulación es común que el usuario cambie de opinión ("mejor 2 palos")
+            # Así que lo mejor es confiar en el LLM SI Y SOLO SI el prompt es bueno.
             updated_sim["monto_solicitado"] = new_monto
             newly_extracted["monto_solicitado"] = new_monto
 
         if new_plazo is not None:
             updated_sim["plazo_solicitado"] = new_plazo
             newly_extracted["plazo_solicitado"] = new_plazo
-    
-    print(f"[DEBUG-SIM] State Resultante: {updated_sim}")
     
     # 3. EVALUACIÓN Y DECISIÓN
     missing = _get_missing_sim_fields(updated_sim)
