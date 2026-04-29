@@ -109,6 +109,9 @@ RESTRICCIONES:
 - NO menciones números técnicos ni tasas en este paso (eso viene después).
 - NO hagas más de UNA pregunta a la vez. Pide un dato, no tres.
 - Máximo 3 oraciones en tu respuesta.
+
+- Si el ANÁLISIS DEL EXTRACTOR es 'Error' o indica que faltan datos, pero ves en el ÚLTIMO MENSAJE que el usuario sí intentó darlos, responde de forma empática y casual. 
+- Ejemplo: "¡Te escuché lo del monto! Pero mi sistema se mareó un poco. ¿En cuántas cuotas quieres pagarlo?" o "Pucha, no capté bien el dato, ¿me lo podrías repetir más simple?".
 """
 
 SYSTEM_PROMPT_GENERATION_SIM = """
@@ -128,6 +131,9 @@ RESTRICCIONES:
 - NO menciones números técnicos ni tasas en este paso (eso viene después).
 - NO hagas más de UNA pregunta a la vez. Pide un dato, no tres.
 - Máximo 3 oraciones en tu respuesta.
+
+- Si el ANÁLISIS DEL EXTRACTOR es 'Error' o indica que faltan datos, pero ves en el ÚLTIMO MENSAJE que el usuario sí intentó darlos, responde de forma empática y casual. 
+- Ejemplo: "¡Te escuché lo del monto! Pero mi sistema se mareó un poco. ¿En cuántas cuotas quieres pagarlo?" o "Pucha, no capté bien el dato, ¿me lo podrías repetir más simple?".
 """
 
 # ======================================================================================================
@@ -326,7 +332,8 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
         intencion=extracted.intencion,
         known_profile=updated_profile,
         missing=missing,
-        newly_extracted=newly_extracted,
+        newly_extracted=newly_extracted,last_msg=last_user_msg,          # <--- Nuevo
+        razonamiento=extracted.razonamiento # <--- Nuevo
     )
 
     flux_response = _flux_generator.invoke([
@@ -409,7 +416,9 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
         known_sim=updated_sim,
         missing=missing,
         newly_extracted=newly_extracted,
-        profile_just_completed=just_finished_profile # ← Pasamos el flag
+        profile_just_completed=just_finished_profile, # ← Pasamos el flag
+        last_msg=last_user_msg,          # <--- Nuevo
+        razonamiento=extracted.razonamiento # <--- Nuevo
     )
     
     flux_response = _flux_generator.invoke([
@@ -587,6 +596,8 @@ def _build_profile_generation_context(
     known_profile: dict,
     missing: list[str],
     newly_extracted: dict,
+    last_msg: str = "",
+    razonamiento: str = ""
 ) -> str:
     """
     Construye el bloque de contexto estructurado para la Llamada B (generador).
@@ -638,7 +649,11 @@ def _build_profile_generation_context(
     # Construir sección de datos faltantes
     missing_labels = [field_labels[f] for f in missing]
     
-    context = f"""CONTEXTO PARA TU RESPUESTA:
+    context = f"""
+    ÚLTIMO MENSAJE DEL USUARIO: "{last_msg}"
+    ANÁLISIS DEL EXTRACTOR: {razonamiento}
+
+    CONTEXTO PARA TU RESPUESTA:
     
     Usuario: {nombre}
     Intención detectada en su último mensaje: {intencion}
@@ -667,6 +682,8 @@ def _build_sim_generation_context(
     missing: list[str],
     newly_extracted: dict,
     profile_just_completed: bool = False,
+    last_msg: str = "",          # <--- Nuevo
+    razonamiento: str = ""       # <--- Nuevo
 ) -> str:
     """Versión especializada para la recolección de monto y plazo."""
     field_labels = {
@@ -700,6 +717,9 @@ def _build_sim_generation_context(
 
     context = f"""
     {transicion_msg}
+    ÚLTIMO MENSAJE DEL USUARIO: "{last_msg}"
+    ANÁLISIS DEL EXTRACTOR: {razonamiento}
+    
     CONTEXTO PARA TU RESPUESTA:
     
     Usuario: {nombre}
