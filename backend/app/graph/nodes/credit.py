@@ -523,8 +523,10 @@ def loan_risk_engine_node(state: FluxState) -> dict:
         )
 
     return {
-        "engine_result": engine_result,
-        "session":       {**session, "current_node": "LOAN_RISK_ENGINE"},
+        "evaluation_results": {
+            "loan_engine": engine_result,
+        },
+        "session": {**session, "current_node": "LOAN_RISK_ENGINE"},
     }
 
 # ======================================================================================================
