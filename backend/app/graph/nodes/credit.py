@@ -45,18 +45,26 @@ Eres un motor de extracción de datos financieros. Tu función es analizar el me
 
 INSTRUCCIONES:
 1. Clasifica la `intencion` (DATO_FINANCIERO, PREGUNTA, SALUDO, OTRO).
-2. Usa el campo `razonamiento` para explicar qué datos ves. 
-3. REGLA DE ORO: Si un dato numérico no está explícito, el valor DEBE ser 0.
-4. Si el nivel de estudios no está, usa estrictamente 'DESCONOCIDO'.
+2. Usa el campo `razonamiento` para explicar qué datos ves.
+3. REGLAS DE CONVERSIÓN:
+   - DINERO: "palo" = 1.000.000 | "luca" = 1.000.
+   - ANTIGÜEDAD: Convierte siempre años a meses (ej: "1 año" = 12, "5 años" = 60).
+   - ESTUDIOS (Mapeo):
+     * ingeniería, medicina, leyes, gerente, profesional, contador -> UNIVERSITARIO
+     * magíster, doctorado, postgrado, MBA -> POSTGRADO
+     * técnico, ip, cft, inacap, duoc -> TECNICO
+     * media, liceo, colegio, cuarto medio -> MEDIA
+4. REGLA DE ORO: Si un dato numérico no está explícito, el valor DEBE ser 0.
+5. Si el nivel de estudios no está, usa estrictamente 'DESCONOCIDO'.
 
-EJEMPLO:
-Usuario: "Gano 2 millones"
+EJEMPLO DORADO (es un ejemplo, las respuestas del usuario podrían ser parceladas y no incluir todos los datos de una vez, tienes que ser capaz de identificar los datos presentes y retornar un JSON con ellos, los que no estén presentes deben ser 0 o DESCONOCIDO según la regla de oro):
+Usuario: "Gano 1.5 palos, soy contador y llevo 4 años en mi pega"
 -> {
     "intencion": "DATO_FINANCIERO",
-    "razonamiento": "El usuario indica renta de 2M. No menciona antigüedad ni estudios.",
-    "renta": 2000000,
-    "antiguedad_laboral": 0,
-    "nivel_estudios": "DESCONOCIDO"
+    "razonamiento": "Extraigo renta de 1.5M (1.5 palos), estudios universitarios (contador) y antigüedad de 48 meses (4 años).",
+    "renta": 1500000,
+    "antiguedad_laboral": 48,
+    "nivel_estudios": "UNIVERSITARIO"
 }
 """
 
@@ -111,6 +119,7 @@ PERSONALIDAD:
 - Eres ágil: no das rodeos innecesarios, pero sí eres empático.
 - Celebras cuando el usuario entrega datos (¡Buenazo!, ¡Perfecto!, ¡Anotado!).
 - Si el usuario da información fuera de contexto, lo rediriges con gracia, sin regañar.
+- Si el contexto indica que el perfil se completó, evita saludos de inicio ("Hola", "Qué gusto") y usa frases de transición ("¡Excelente!, con eso listo...", "¡Perfecto!, ya tenemos tu perfil...").
 
 TAREA ACTUAL: Recolección de monto y plazo del crédito.
 
@@ -308,6 +317,7 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
                 node_status="SUCCESS",
                 engine_status="PENDING",
             )
+        output["session"]["profile_just_completed"] = True # ← Flag especial para el orquestador
         return output # ← Return transaccional sin mensajes
     
     # 8. ------ LLAMADA B - GENERACIÓN ------
@@ -343,6 +353,7 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
     collecting = state.get("collecting_data", {})
     prep       = state.get("preparation_data", {})
     messages   = state.get("messages", [])
+    just_finished_profile = session.get("profile_just_completed", False) # ← Recuperar flag
     
     current_sim = collecting.get("loan_sim", {})
     first_name  = prep.get("nombre", "").split()[0] if prep.get("nombre") else "amig@"
@@ -397,7 +408,8 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
         intencion=extracted.intencion,
         known_sim=updated_sim,
         missing=missing,
-        newly_extracted=newly_extracted
+        newly_extracted=newly_extracted,
+        profile_just_completed=just_finished_profile # ← Pasamos el flag
     )
     
     flux_response = _flux_generator.invoke([
@@ -409,7 +421,10 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
     clean_content = normalize_llm_response(flux_response.content)
     output["messages"] = [AIMessage(content=clean_content)]
     
-    return output   
+    # IMPORTANTE: Reseteamos el flag para que solo ocurra una vez
+    output["session"]["profile_just_completed"] = False
+    
+    return output
 
 
 # ── 4. NODO DE CÁLCULO DE RIESGO (loan_risk_engine) ───────────────────────
@@ -651,6 +666,7 @@ def _build_sim_generation_context(
     known_sim: dict,
     missing: list[str],
     newly_extracted: dict,
+    profile_just_completed: bool = False,
 ) -> str:
     """Versión especializada para la recolección de monto y plazo."""
     field_labels = {
@@ -678,7 +694,13 @@ def _build_sim_generation_context(
     
     missing_labels = [field_labels[f] for f in missing]
     
-    context = f"""CONTEXTO PARA TU RESPUESTA:
+    transicion_msg = ""
+    if profile_just_completed:
+        transicion_msg = "AVISO: El usuario acaba de completar su perfil exitosamente. NO saludes de nuevo; celebra brevemente el paso anterior y pide el monto."
+
+    context = f"""
+    {transicion_msg}
+    CONTEXTO PARA TU RESPUESTA:
     
     Usuario: {nombre}
     Intención detectada: {intencion}
@@ -697,6 +719,7 @@ def _build_sim_generation_context(
     Si la intención es SALUDO u OTRO, responde con empatía y redirige amablemente a pedir el primer dato faltante.
     Si la intención es PREGUNTA, reconoce la duda brevemente y redirige al proceso.
     """
+
     return context
 
 
