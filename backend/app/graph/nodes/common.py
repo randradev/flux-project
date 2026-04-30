@@ -46,7 +46,7 @@ def welcome_node(state: FluxState) -> dict:
     PROCESO:
         1. Detecta si es sesión nueva o reanudada.
         2. Calcula edad a partir de birth_date (centralizado aquí para toda la app).
-        3. Genera mensaje de bienvenida personalizado.
+        3. Genera mensaje de bienvenida personalizado dependiendo del modo de operación.
         4. Actualiza GPS en Supabase.
         5. Escribe preparation_data con datos procesados.
 
@@ -54,11 +54,24 @@ def welcome_node(state: FluxState) -> dict:
         - messages: Agrega mensaje de bienvenida.
         - session["current_node"]: "WELCOME_NODE".
         - preparation_data: {nombre, rut, mail, edad}.
+
+    VERSIÓN 2.1 — Nodo de Hidratación Silenciosa.
+
+    MODOS DE OPERACIÓN:
+      A) Silencioso: cuando product_intent ya existe O hay mensajes previos.
+         → Solo hidrata preparation_data y actualiza GPS. Sin AIMessage.
+      B) Bienvenida: cuando es sesión completamente nueva (sin intención ni historial).
+         → Emite mensaje de bienvenida con los productos disponibles.
+
+    REGLA DE ORO: Este nodo NUNCA sobreescribe current_node si ya hay
+    un proceso activo (ver _RESUME_MAP en edges.py). Su current_node
+    propio ("WELCOME_NODE") sólo se escribe en Modo Bienvenida.
     """
     user = state.get("user_data", {})
     session = state.get("session", {})
     messages = state.get("messages", [])
 
+    # ── Datos universales (siempre se calculan) ───────────────
     full_name = user.get("full_name", "")
     first_name = full_name.split()[0] if full_name else "amig@"
 
@@ -66,49 +79,62 @@ def welcome_node(state: FluxState) -> dict:
     birth_date_str = user.get("birth_date")
     edad = _calculate_age(birth_date_str) if birth_date_str else 0
 
-    # Detectar si es sesión nueva o reanudada
-    is_resumed = len(messages) > 0 and session.get("previous_node") is not None
+    preparation_data = {
+        "nombre": full_name,
+        "rut": user.get("rut", ""),
+        "mail": user.get("email", ""),
+        "edad": edad,
+    }
 
-    if is_resumed:
-        welcome_text = (
-            f"¡Hola de nuevo, {first_name}! 👋 Veo que nos habíamos quedado a mitad del camino. "
-            f"No te preocupes, tu progreso está guardado. ¿Continuamos donde lo dejamos?"
-        )
+    # ── Detección de modo ─────────────────────────────────────
+    product_intent = session.get("product_intent")
+    has_history = len(messages) > 0
+    is_silent_mode = (product_intent is not None) or has_history
+
+    # ── Actualizar GPS en Supabase (siempre) ─────────────────
+    conversation_id = session.get("conversation_id")
+    application_id = session.get("application_id")
+
+    if is_silent_mode:
+        # MODO SILENCIOSO: hidrata datos, no toca current_node del proceso activo
+        if conversation_id:
+            # No sobreescribir: informar a Supabase que welcome pasó pero no es el nodo activo
+            pass  # El nodo activo real se actualizará en su propio nodo
+        if application_id:
+            update_application_semaphores(
+                application_id,
+                current_node_id="WELCOME_NODE",
+                node_status="SUCCESS",   # No "BYPASSED" hasta validar el enum en la DB
+                engine_status="PENDING"
+            )
+        # Retornar sin messages: sólo preparation_data se escribe
+        return {
+            "preparation_data": preparation_data,
+            # session NO se modifica: current_node del proceso activo se preserva
+        }
+
     else:
+        # MODO BIENVENIDA: sesión nueva, sin intención, sin historial
         welcome_text = (
             f"¡Hola, {first_name}! 👋 Soy Flux, tu asistente financiero. "
             f"Estoy aquí para ayudarte a solicitar un **Crédito de Consumo**, "
             f"abrir una **Cuenta Corriente**, o contratar un **Depósito a Plazo**. "
             f"¿Con qué te puedo ayudar hoy?"
         )
-
-    # Actualizar GPS en la DB
-    conversation_id = session.get("conversation_id")
-    if conversation_id:
-        update_conversation_node(conversation_id, "WELCOME_NODE")
-
-    # ── Actualizar semáforo del inicio ──
-    application_id = session.get("application_id")
-    if application_id:
-        update_application_semaphores(
-            application_id,
-            current_node_id="WELCOME_NODE",
-            node_status="SUCCESS",
-            engine_status="PENDING"
-        )
-
-    return {
-        "messages": [AIMessage(content=welcome_text)],
-        "session": {**session, "current_node": "WELCOME_NODE"},
-        # ── NUEVO en v2.0: preparation_data ──────────────────────
-        "preparation_data": {
-            "nombre": full_name,
-            "rut": user.get("rut", ""),
-            "mail": user.get("email", ""),
-            "edad": edad,
-        },
-    }
-
+        if conversation_id:
+            update_conversation_node(conversation_id, "WELCOME_NODE")
+        if application_id:
+            update_application_semaphores(
+                application_id,
+                current_node_id="WELCOME_NODE",
+                node_status="SUCCESS",
+                engine_status="PENDING"
+            )
+        return {
+            "messages": [AIMessage(content=welcome_text)],
+            "session": {**session, "current_node": "WELCOME_NODE"},
+            "preparation_data": preparation_data,
+        }
 
 # ── INTENT_ROUTER_NODE ────────────────────────────────────────
 
