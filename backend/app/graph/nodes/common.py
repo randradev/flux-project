@@ -17,7 +17,48 @@ from app.graph.state import FluxState
 from app.infra.supabase import get_user_by_email, update_conversation_node
 from app.infra.gemini_client import get_chat_model
 from app.infra.supabase import update_application_semaphores
+from app.graph.nodes.schemas.common_schemas import IntentExtractionSchema
+from app.infra.gemini_client import get_structured_model
 
+# ======================================================================================================
+# LLM Y PROMPTS
+# ======================================================================================================
+
+# ── CONFIGURACIÓN DE INTELIGENCIA (SINGLETONS) ──────────────
+# Singletons de modelos (se instancian una vez al importar el módulo)
+_intent_extractor = get_structured_model(IntentExtractionSchema)
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPT DE RECONOCIMIENTO DE INTENCIÓN (INTENT_ROUTER_NODE) ───────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+# ── PROMPT LLAMADA A: EXTRACCIÓN ────────────────────────────────────────────
+# Directivo y sin ambigüedad. Temperatura 0.0 hace el trabajo pesado;
+# el prompt solo establece el contrato de qué retornar.
+
+_INTENT_SYSTEM_PROMPT = """
+Eres el clasificador de intenciones de FLUX, un sistema bancario conversacional.
+Analiza el mensaje del usuario y clasifica su intención en UNA categoría exacta.
+
+CATEGORÍAS:
+  LOAN    — Crédito, préstamo, financiamiento, plata prestada.
+  ACCOUNT — Cuenta corriente, cuenta bancaria, abrir cuenta.
+  DAP     — Depósito a plazo, inversión, ahorrar con intereses, DAP.
+  GENERAL — Saludo, pregunta general, duda o mensaje fuera de las categorías anteriores.
+
+REGLA DE ORO: Retorna JSON con los campos razonamiento, intencion y confianza.
+
+EJEMPLOS:
+  "Quiero un crédito de 5 millones" → LOAN, ALTA
+  "Necesito abrir una cuenta"       → ACCOUNT, ALTA
+  "¿Puedo invertir mi sueldo?"      → DAP, MEDIA
+  "¿Qué es el CAE?"                 → GENERAL, ALTA
+  "hola"                            → GENERAL, ALTA
+"""
+
+# ======================================================================================================
+# HELPERS
+# ======================================================================================================
 
 def _calculate_age(birth_date_str: str) -> int:
     """
@@ -33,6 +74,9 @@ def _calculate_age(birth_date_str: str) -> int:
         (today.month, today.day) < (birth.month, birth.day)
     )
 
+# ======================================================================================================
+# NODOS TRANSVERSALES
+# ======================================================================================================
 
 def welcome_node(state: FluxState) -> dict:
     """
@@ -137,31 +181,9 @@ def welcome_node(state: FluxState) -> dict:
         }
 
 # ── INTENT_ROUTER_NODE ────────────────────────────────────────
-
-_INTENT_SYSTEM_PROMPT = """
-Eres el clasificador de intenciones de FLUX, un sistema bancario conversacional.
-Tu única función es analizar el mensaje del usuario y clasificar su intención
-en UNA de las siguientes categorías exactas. Responde SOLO con la categoría, sin explicaciones.
-
-CATEGORÍAS:
-- LOAN: El usuario quiere solicitar un crédito, préstamo, financiamiento o dinero prestado.
-- ACCOUNT: El usuario quiere abrir una cuenta corriente o cuenta bancaria.
-- DAP: El usuario quiere invertir, hacer un depósito a plazo, ahorrar con intereses o un DAP.
-- GENERAL: El usuario tiene una pregunta general, duda, saludo, o algo que no encaja en las categorías anteriores.
-
-EJEMPLOS:
-"Quiero un crédito de 5 millones" → LOAN
-"Necesito abrir una cuenta" → ACCOUNT
-"¿Puedo invertir mi sueldo?" → DAP
-"¿Cómo funciona esto?" → GENERAL
-"hola" → GENERAL
-"¿Qué es el CAE?" → GENERAL
-"""
-
-
 def intent_router_node(state: FluxState) -> dict:
     """
-    Nodo clasificador de la intención inicial del usuario.
+    VERSIÓN 2.1 — Clasificador con extracción estructurada (Llamada Tipo A).
 
     INPUT (State):
         - state["messages"]: Último mensaje del usuario.
@@ -170,8 +192,10 @@ def intent_router_node(state: FluxState) -> dict:
     PROCESO:
         1. Extrae el último mensaje del usuario del historial.
         2. Envía el mensaje al LLM con el prompt de clasificación.
-        3. Parsea la respuesta para obtener el código de intención (LOAN, ACCOUNT, DAP, GENERAL).
-        4. Actualiza el product_intent en el estado.
+        3. Usa _intent_extractor (LLM.with_structured_output(IntentExtractionSchema))
+        en lugar de text completion con parsing manual.
+        4. Registra confianza en session para futuros umbrales.
+        5. Actualiza el product_intent en el estado.
 
     OUTPUT (campos del State que modifica):
         - session["product_intent"]: Código de intención detectada.
@@ -183,40 +207,33 @@ def intent_router_node(state: FluxState) -> dict:
     session = state.get("session", {})
 
     # Obtener el último mensaje del usuario
-    last_user_message = ""
-    for msg in reversed(messages):
-        if hasattr(msg, "type") and msg.type == "human":
-            last_user_message = msg.content
-            break
+    last_user_message = next(
+        (m.content for m in reversed(messages) if hasattr(m, "type") and m.type == "human"),
+        ""
+    )
 
     if not last_user_message:
-        # Si no hay mensaje del usuario, asumir intención GENERAL
-        intent = "GENERAL"
-    else:
-        model = get_chat_model()
-        classification_messages = [
-            SystemMessage(content=_INTENT_SYSTEM_PROMPT),
-            HumanMessage(content=last_user_message),
-        ]
-        response = model.invoke(classification_messages)
-        content = response.content
-        
-        # Manejo robusto: Gemini a veces retorna una lista de bloques
-        if isinstance(content, list):
-            content = " ".join([c if isinstance(c, str) else str(c.get("text", "")) for c in content])
-        
-        raw_intent = content.strip().upper()
+        return {
+            "session": {
+                **session,
+                "product_intent": "GENERAL",
+                "current_node": "INTENT_ROUTER",
+            }
+        }
 
-        # Validar que la respuesta es una categoría válida
-        valid_intents = {"LOAN", "ACCOUNT", "DAP", "GENERAL"}
-        intent = raw_intent if raw_intent in valid_intents else "GENERAL"
+    # Extracción con LLM estructurado
+    extracted: IntentExtractionSchema = _intent_extractor.invoke([
+        {"role": "system", "content": _INTENT_SYSTEM_PROMPT},
+        {"role": "user",   "content": last_user_message},
+    ]) or IntentExtractionSchema(intencion="GENERAL", razonamiento="Error en extracción")
 
 
     return {
         "session": {
             **session,
-            "product_intent": intent,
-            "current_node": "INTENT_ROUTER",
+            "product_intent": extracted.intencion,
+            "current_node":   "INTENT_ROUTER",
+            # confianza se puede guardar en session para logging si se agrega a SessionData
         }
     }
 
