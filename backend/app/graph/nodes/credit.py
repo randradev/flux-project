@@ -26,8 +26,9 @@ _profile_extractor = get_structured_model(LoanProfileExtraction)
 _sim_extractor     = get_structured_model(LoanSimExtraction)
 _flux_generator    = get_generation_model()  # NUEVO — Llamada B
 
-
+# ───────────────────────────────────────────────────
 # ── SYSTEM PROMPTS (IDENTIDAD FLUX) ────────────────
+# ───────────────────────────────────────────────────
 
 # ── 1. IDENTIDAD CORE (Reutilizable en todo el bot)
 FLUX_IDENTITY = (
@@ -35,6 +36,36 @@ FLUX_IDENTITY = (
     "Hablas de tú, eres cercano, ágil y traduces la burocracia a lenguaje humano. "
     "Entiendes perfectamente el contexto chileno y modismos locales."
 )
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPT DE BIENVENIDA AL PRODUCTO (loan_init_node) ────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+# ── PROMPT LLAMADA B: GENERACIÓN ────────────────────────────────────────────
+# Recibe contexto estructurado e inyecta personalidad Flux.
+# La temperatura 0.7 lo hace variado y natural entre sesiones.
+
+SYSTEM_PROMPT_INIT_LOAN = """
+Eres Flux, el genio amigable de las finanzas en Chile.
+
+PERSONALIDAD:
+- Hablas de tú, eres cercano y usas modismos chilenos con moderación.
+- Eres ágil y empático: no das rodeos, pero sí transmites calidez.
+
+TAREA ACTUAL: Dar la bienvenida al usuario al proceso de Crédito de Consumo.
+Esta es la PRIMERA vez que el usuario entra al flujo de crédito.
+
+RESTRICCIONES CRÍTICAS:
+- Máximo 2 oraciones.
+- Tu respuesta DEBE terminar pidiendo la renta líquida mensual.
+- NO menciones tasas, CAE ni otros detalles técnicos en este paso.
+- NO repitas el saludo de bienvenida general (ya fue hecho antes).
+- Varía el tono: no siempre uses "¡Perfecto!" al inicio.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPTS DE EXTRACCIÓN EN NODOS COLLECTING ────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
 
 # ── PROMPT LLAMADA A: EXTRACCIÓN ────────────────────────────────────────────
 # Directivo y sin ambigüedad. Temperatura 0.0 hace el trabajo pesado;
@@ -87,7 +118,6 @@ Usuario: "En 12 cuotas"
     "plazo_solicitado": 12
 }
 """
-
 
 # ── PROMPT LLAMADA B: GENERACIÓN ────────────────────────────────────────────
 # Recibe contexto estructurado e inyecta personalidad Flux.
@@ -159,42 +189,69 @@ def loan_init_node(state: FluxState) -> dict:
         1. Handshake: Verificar que product_intent == "LOAN".
         2. Reset: Limpiar loan_profile y loan_sim.
         3. Saludo personalizado con datos de preparation_data.
-        4. Actualizar semáforo: LOAN_INIT / SUCCESS / PENDING.
+        4. Actualizar semáforo: LOAN_COLLECTING_INIT / SUCCESS / PENDING.
 
     OUTPUT (campos del State que modifica):
         - messages: Saludo de bienvenida al flujo de crédito.
-        - session["current_node"]: "LOAN_INIT".
+        - session["current_node"]: "LOAN_COLLECTING_PROFILE".
         - collecting_data["loan_profile"]: {} (limpio).
         - collecting_data["loan_sim"]: {} (limpio).
+
+    CAMBIOS vs 2.0:
+      - Eliminado: string fijo de bienvenida.
+      - Agregado: Llamada Tipo B al LLM para generar bienvenida dinámica.
+      - Agregado: current_node se actualiza a LOAN_COLLECTING_PROFILE
+        inmediatamente (sincronización del "Punto de Guardado").
+
+    PUNTO DE GUARDADO:
+      Este nodo actualiza current_node a "LOAN_COLLECTING_PROFILE" (no "LOAN_INIT")
+      antes de retornar, para que en el siguiente renacimiento del grafo,
+      route_after_welcome dirija al nodo de recolección directamente.
     """
     prep = state.get("preparation_data", {})
     session = state.get("session", {})
 
     nombre = prep.get("nombre", "")
+    edad = prep.get("edad", 0)
     first_name = nombre.split()[0] if nombre else "amig@"
 
     product_intent = session.get("product_intent")
+    application_id = session.get("application_id")
+
     if product_intent != "LOAN":
         msg = "Hubo un error de navegación. Por favor, indica nuevamente qué necesitas."
-    else:
-        msg = (
-            f"¡Perfecto, {first_name}! Vamos a revisar tu solicitud de **Crédito de Consumo**. "
-            f"Es un proceso rápido. Primero necesito conocer un poco tu perfil financiero. "
-            f"¿Cuál es tu renta líquida mensual?"
-        )
+        return {
+            "messages": [AIMessage(content=msg)],
+            "session": {**session, "current_node": "LOAN_INIT"},
+        }
 
-    application_id = session.get("application_id")
+    # ── Llamada Tipo B: Bienvenida dinámica al crédito ────────
+    init_context = (
+        f"Usuario: {first_name}, {edad} años.\n"
+        f"Genera la bienvenida al proceso de Crédito de Consumo y pide la renta líquida mensual."
+    )
+    flux_response = _flux_generator.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_INIT_LOAN},
+        {"role": "user",   "content": init_context},
+    ])
+    msg = normalize_llm_response(flux_response.content)
+
+    # ── Semáforo ──────────────────────────────────────────────
     if application_id:
         update_application_semaphores(
             application_id=application_id,
-            current_node_id="LOAN_INIT",   # Valor semántico UPPER_CASE para Supabase
-            node_status="SUCCESS",         # El INIT es síncrono: terminó al retornar
-            engine_status="PENDING",       # El motor aún no ha arrancado
+            current_node_id="LOAN_INIT",
+            node_status="SUCCESS",
+            engine_status="PENDING",
         )
 
+    # ── PUNTO DE GUARDADO: current_node → LOAN_COLLECTING_PROFILE ──
+    # Registramos el destino del SIGUIENTE turno, no el nodo actual.
+    # Esto garantiza que tras el renacimiento del grafo, route_after_welcome
+    # dirija directamente a loan_collecting_profile sin pasar por loan_init de nuevo.
     return {
         "messages": [AIMessage(content=msg)],
-        "session": {**session, "current_node": "LOAN_INIT"},
+        "session": {**session, "current_node": "LOAN_COLLECTING_PROFILE"},
         "collecting_data": {
             "loan_profile": {},
             "loan_sim": {},
