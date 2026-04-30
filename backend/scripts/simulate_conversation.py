@@ -102,7 +102,7 @@ def _extract_state_snapshot(state_values: dict) -> dict:
     snap = {}
     for key, val in state_values.items():
         if key == "messages":
-            snap[key] = [{"type": type(m).__name__, "content": m.content[:80]} for m in val]
+            snap[key] = [{"type": type(m).__name__, "content": m.content} for m in val]
         elif isinstance(val, dict):
             snap[key] = copy.deepcopy(val)
         else:
