@@ -60,6 +60,13 @@ def account_init_node(state: FluxState) -> dict:
         },
     }
 
+# ── ACCOUNT_COLLECTING_PROFILE ────
+def account_collecting_profile_node(state: FluxState) -> dict:
+    """Placeholder para la recolección de perfil de Cuenta Corriente (Fase 3)."""
+    return {
+        "messages": [AIMessage(content="[STUB] Iniciando recolección de perfil para Cuenta Corriente...")],
+        "session": {**state.get("session", {}), "current_node": "ACCOUNT_COLLECTING_PROFILE"}
+    }
 
 # ── ACCOUNT_EVALUATION_ENGINE (account_evaluation_engine) ────
 

@@ -62,6 +62,14 @@ def dap_init_node(state: FluxState) -> dict:
         },
     }
 
+# ── DAP_COLLECT_DATA (dap_collect_data) ────────────────────────────
+def dap_collect_data_node(state: FluxState) -> dict:
+    """Placeholder para la recolección de datos de DAP (Fase 3)."""
+    return {
+        "messages": [AIMessage(content="[STUB] Iniciando recolección de datos para Depósito a Plazo...")],
+        "session": {**state.get("session", {}), "current_node": "DAP_COLLECT_DATA"}
+    }
+
 
 def dap_investment_engine_node(state: FluxState) -> dict:
     """
