@@ -120,13 +120,13 @@ def build_graph() -> StateGraph:
 
     # ── Rutas de Producto: INIT → ENGINE → END ────────────────
     # Crédito de Consumo
-    graph.add_edge("loan_init",                  "loan_collecting_profile")
-    graph.add_edge("loan_collecting_profile",    "loan_collecting_simulation")
+    graph.add_edge("loan_init",                  END)
+    graph.add_edge("loan_collecting_profile",    END)
     graph.add_edge("loan_collecting_simulation", "loan_risk_engine")
     graph.add_edge("loan_risk_engine",           END)
 
     # Cuenta Corriente
-    graph.add_edge("account_init",               "account_collecting_profile")
+    graph.add_edge("account_init",               END)
     graph.add_edge("account_collecting_profile", "account_evaluation_engine")
     graph.add_edge("account_evaluation_engine",  END)
 
