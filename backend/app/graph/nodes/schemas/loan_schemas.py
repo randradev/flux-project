@@ -30,7 +30,7 @@ class LoanProfileExtraction(BaseModel):
     )
     razonamiento: str = Field(
         default="",
-        description="Justifica brevemente por qué extraes o dejas en null cada campo basándote SOLO en el mensaje actual."
+        description="Justifica brevemente por qué extraes o dejas en null cada campo basándote SOLO en el mensaje actual. Texto plano, sin comillas, una sola línea."
     )
     renta: Optional[int] = Field(
         default=None,
@@ -61,7 +61,18 @@ class LoanProfileExtraction(BaseModel):
             "Si no fue mencionado, retornar 'DESCONOCIDO'."
         )
     )
-
+    # Ayudar al LLM a encasillar la respuesta en el Literal exacto
+    @field_validator("nivel_estudios", mode="before")
+    @classmethod
+    def normalize_estudios(cls, v: str) -> str:
+        if not v: return "DESCONOCIDO"
+        v = v.upper()
+        if "MEDIA" in v: return "MEDIA"
+        if "UNIV" in v: return "UNIVERSITARIO"
+        if "TECNI" in v: return "TECNICO"
+        if "POST" in v or "MAGI" in v or "DOCTO" in v: return "POSTGRADO"
+        return v
+    '''
     @field_validator("renta")
     @classmethod
     def renta_must_be_positive(cls, v: Optional[int]) -> Optional[int]:
@@ -89,6 +100,7 @@ class LoanProfileExtraction(BaseModel):
         if v == "DESCONOCIDO":
             return None
         return v
+    '''
 
 class LoanSimExtraction(BaseModel):
     """
@@ -126,7 +138,16 @@ class LoanSimExtraction(BaseModel):
             "Si no fue mencionado, retornar null."
         )
     )
-
+    
+    @field_validator("monto_solicitado", mode="before")
+    @classmethod
+    def clean_monto(cls, v):
+        if isinstance(v, str):
+            # Quita puntos, signos de peso y espacios
+            clean_v = re.sub(r'[.$ ]', '', v)
+            return int(clean_v) if clean_v.isdigit() else None
+        return v
+    '''
     @field_validator("monto_solicitado", "plazo_solicitado")
     @classmethod
     def must_be_positive(cls, v: Optional[int]) -> Optional[int]:
@@ -134,3 +155,4 @@ class LoanSimExtraction(BaseModel):
         if v is not None and v <= 0:
             return None
         return v
+    '''

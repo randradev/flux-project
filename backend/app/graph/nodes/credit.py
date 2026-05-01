@@ -16,6 +16,7 @@ from app.infra.supabase import update_application_semaphores
 from app.modules.credit_eng import CreditEngine, PolicyRejectionError, PaymentCapacityError
 from app.utils.llm_utils import normalize_llm_response
 from app.graph.constants import CompletedStep
+from langchain_core.outputs import LLMResult
 
 # ======================================================================================================
 # LLM Y PROMPTS
@@ -73,7 +74,19 @@ RESTRICCIONES CRÍTICAS:
 # el prompt solo establece el contrato de qué retornar.
 
 SYSTEM_PROMPT_EXTRACTION_PROFILE = """
-Eres un motor de extracción de datos financieros. Tu función es analizar el mensaje del usuario y retornar un JSON estructurado.
+Eres un motor de extracción de datos financieros. Tu ÚNICA misión es analizar el mensaje del usuario y retornar un JSON estructurado VÁLIDO.
+
+REGLAS DE FORMATO:
+- NO uses bloques de código Markdown (prohibido usar ```json).
+- El campo 'razonamiento' debe ser una sola frase corta sin comillas internas.
+- Los números deben ser enteros puros (sin puntos ni comas).
+
+REGLAS DE RAZONAMIENTO:
+1. 'razonamiento': Escribe máximo 5 palabras. PROHIBIDO usar comillas " o saltos de línea.
+2. 'renta': Solo números.
+3. 'nivel_estudios': Solo usa los valores del Literal.
+
+Si el usuario dice "2 millones", tu razonamiento debe ser: "Monto detectado en lenguaje natural". NADA MÁS.
 
 INSTRUCCIONES:
 1. Clasifica la `intencion` (DATO_FINANCIERO, PREGUNTA, SALUDO, OTRO).
@@ -81,11 +94,13 @@ INSTRUCCIONES:
 3. REGLAS DE CONVERSIÓN:
    - DINERO: "palo" = 1.000.000 | "luca" = 1.000.
    - ANTIGÜEDAD: Convierte siempre años a meses (ej: "1 año" = 12, "5 años" = 60).
-   - ESTUDIOS (Mapeo):
-     * ingeniería, medicina, leyes, gerente, profesional, contador -> UNIVERSITARIO
-     * magíster, doctorado, postgrado, MBA -> POSTGRADO
-     * técnico, ip, cft, inacap, duoc -> TECNICO
-     * media, liceo, colegio, cuarto medio -> MEDIA
+   - ESTUDIOS (Instrucción de Inferencia):
+     * Eres un experto en el mercado laboral chileno. 
+     * Si el usuario menciona una profesión titulada (Ingeniero, Abogado, Médico, Psicólogo, etc.) o dice "soy titulado/graduado", clasifica automáticamente como UNIVERSITARIO.
+     * No seas excesivamente conservador: una profesión implica estudios superiores.
+     * Si el usuario menciona técnicos o centros de formación, clasifica automáticamente como TECNICO.
+     * Si el usuario dice "Cuarto medio", "Escuela", "Licenciatura de enseñanza media" o "Terminé el colegio" -> Usa MEDIA.
+     * Solo usa 'DESCONOCIDO' si el mensaje es un saludo o no tiene relación alguna con educación.
 4. REGLA DE ORO: Si un dato numérico no está explícito, el valor DEBE ser 0.
 5. Si el nivel de estudios no está, usa estrictamente 'DESCONOCIDO'.
 
@@ -141,8 +156,21 @@ RESTRICCIONES:
 - NO hagas más de UNA pregunta a la vez. Pide un dato, no tres.
 - Máximo 3 oraciones en tu respuesta.
 
-- Si el ANÁLISIS DEL EXTRACTOR es 'Error' o indica que faltan datos, pero ves en el ÚLTIMO MENSAJE que el usuario sí intentó darlos, responde de forma empática y casual. 
-- Ejemplo: "¡Te escuché lo del monto! Pero mi sistema se mareó un poco. ¿En cuántas cuotas quieres pagarlo?" o "Pucha, no capté bien el dato, ¿me lo podrías repetir más simple?".
+INSTRUCCIÓN PARA SOLICITAR NIVEL DE ESTUDIOS:
+- Cuando falte el nivel de estudios, pídelo de forma casual sugiriendo opciones para ayudar al sistema.
+- Ejemplo: "Oye, y para tu ficha, ¿cuál es tu nivel de estudios? (¿Universitario, técnico, tienes algún postgrado o media?). ¡Con eso ya estamos!"
+- Si el ANÁLISIS TÉCNICO indica 'Error' en estudios, di: "¡Te escuché lo de [título/carrera]! Pero para que mi sistema no se maree, ¿me confirmas si eso es universitario o técnico?
+
+MANEJO DE ERRORES Y AMBIGÜEDAD (CRÍTICO):
+- Tu prioridad es que el usuario se sienta ESCUCHADO. 
+- Si en el 'ANÁLISIS TÉCNICO' ves que hubo un problema (Error, duda, confusión), pero en el 'ÚLTIMO MENSAJE' ves que el usuario sí respondió, usa esa información.
+- NUNCA digas "mi sistema falló" o "hubo un error técnico". 
+- Usa frases como: 
+    * "¡Buenísimo lo de [profesión]! Para que no se me escape nada, ¿me confirmas si eso cuenta como [categoría]?"
+    * "Pucha, te entendí la idea pero me falta el detalle exacto: ¿cuánto sería tu renta líquida?"
+    * "¡Te escuché clarito!, pero me perdí en la parte de [campo], ¿me lo repites?"
+
+Si el usuario se ve frustrado o escribe en mayúsculas, mantén la calma, dale la razón ("¡Toda la razón, me traspapelé!") y pide el dato de la forma más sencilla posible.
 """
 
 SYSTEM_PROMPT_GENERATION_SIM = """
@@ -163,8 +191,16 @@ RESTRICCIONES:
 - NO hagas más de UNA pregunta a la vez. Pide un dato, no tres.
 - Máximo 3 oraciones en tu respuesta.
 
-- Si el ANÁLISIS DEL EXTRACTOR es 'Error' o indica que faltan datos, pero ves en el ÚLTIMO MENSAJE que el usuario sí intentó darlos, responde de forma empática y casual. 
-- Ejemplo: "¡Te escuché lo del monto! Pero mi sistema se mareó un poco. ¿En cuántas cuotas quieres pagarlo?" o "Pucha, no capté bien el dato, ¿me lo podrías repetir más simple?".
+MANEJO DE ERRORES Y AMBIGÜEDAD (CRÍTICO):
+- Tu prioridad es que el usuario se sienta ESCUCHADO. 
+- Si en el 'ANÁLISIS TÉCNICO' ves que hubo un problema (Error, duda, confusión), pero en el 'ÚLTIMO MENSAJE' ves que el usuario sí respondió, usa esa información.
+- NUNCA digas "mi sistema falló" o "hubo un error técnico". 
+- Usa frases como: 
+    * "¡Te escuché lo de las lucas, pero me perdí la cifra exacta! Para estar seguros, ¿cuánta plata necesitas pedir exactamente?"
+    * "Pucha, te entendí la idea pero me falta el detalle exacto: ¿en cuántos meses quieres pagarlo?"
+    * "¡Te escuché clarito!, pero me perdí en la parte de [campo], ¿me lo repites?"
+
+Si el usuario se ve frustrado o escribe en mayúsculas, mantén la calma, dale la razón ("¡Toda la razón, me traspapelé!") y pide el dato de la forma más sencilla posible.
 """
 
 # ======================================================================================================
@@ -334,33 +370,66 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
 
     # 3. ------ LLAMADA A - EXTRACCIÓN ------ 
     print(f"\n[DEBUG-PROFILE] Mensaje Usuario: '{last_user_msg}'")
-    extracted: LoanProfileExtraction = _profile_extractor.invoke([
+    
+    raw_response = _flux_generator.invoke([
         {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_PROFILE},
         {"role": "user",   "content": last_user_msg},
-    ]) or LoanProfileExtraction(intencion="OTRO", razonamiento="Error")
+    ])
+
+    # 1. Normalizamos el contenido
+    content_str = normalize_llm_response(raw_response.content)
     
-    print(f"[DEBUG-PROFILE] LLM razonamiento: {getattr(extracted, 'razonamiento', 'N/A')}")
+    # 2. Intentamos parsear el JSON manualmente para tener control
+    import json
+    import re
+
+    # --- INICIO REEMPLAZO EXACTO ---
+    match = re.search(r"\{.*\}", content_str, re.DOTALL)
+    
+    if match:
+        try:
+            json_str = match.group()
+            data = json.loads(json_str)
+            extracted = LoanProfileExtraction(**data)
+        except Exception as e:
+            print(f"[!!!] Error parseando JSON (Pydantic o JSON inválido): {e}")
+            extracted = LoanProfileExtraction(
+                intencion="OTRO",
+                razonamiento=f"Error de validación, pero el LLM dijo: {content_str[:100]}",
+                renta=0, antiguedad_laboral=0, nivel_estudios="DESCONOCIDO"
+            )
+    else:
+        print(f"[!!!] No se encontró JSON en la respuesta. Contenido crudo: {content_str}")
+        extracted = LoanProfileExtraction(
+            intencion="OTRO",
+            razonamiento="No se detectó formato JSON",
+            renta=0, antiguedad_laboral=0, nivel_estudios="DESCONOCIDO"
+        )
+    # --- FIN REEMPLAZO EXACTO ---
+
+    # Ahora los prints son seguros porque 'extracted' nunca será None
+    print(f"[DEBUG-PROFILE] LLM razonamiento: {extracted.razonamiento}")
     print(f"[DEBUG-PROFILE] LLM extraccion: renta={extracted.renta}, antiguedad={extracted.antiguedad_laboral}, estudios={extracted.nivel_estudios}")
 
-    # 4. ------  MERGE DEFENSIVO (Versión Robusta) ------
+    # ------ 4.  MERGE DEFENSIVO (Versión Elástica CP-08) ------
     newly_extracted = {}
-    updated_profile = {**current_profile}
+    updated_profile = {**current_profile} # o updated_sim para el otro nodo
 
-    if extracted.intencion == "DATO_FINANCIERO":
-        # Renta
-        if extracted.renta is not None:
-            updated_profile["renta"] = extracted.renta
-            newly_extracted["renta"] = extracted.renta
+    if extracted.razonamiento != "Error":
+        # Definimos qué valores NO son progreso (Centinelas)
+        SENTINELS = [0, "0", "DESCONOCIDO", None, "null"]
         
-        # Antigüedad
-        if extracted.antiguedad_laboral is not None:
-            updated_profile["antiguedad_laboral"] = extracted.antiguedad_laboral
-            newly_extracted["antiguedad_laboral"] = extracted.antiguedad_laboral
+        # Lista de campos a procesar (ajustar según el nodo)
+        fields_to_process = ["renta", "antiguedad_laboral", "nivel_estudios"]
+
+        for field in fields_to_process:
+            val = getattr(extracted, field, None)
             
-        # Nivel Estudios
-        if extracted.nivel_estudios is not None:
-            updated_profile["nivel_estudios"] = extracted.nivel_estudios
-            newly_extracted["nivel_estudios"] = extracted.nivel_estudios
+            # REGLA DE ORO: Solo actualizamos si el valor NO es un centinela
+            # Esto evita que un "DESCONOCIDO" borre un dato que ya teníamos.
+            if val not in SENTINELS:
+                updated_profile[field] = val
+                newly_extracted[field] = val
 
 
     # 5. ------ EVALUACIÓN DE COMPLETITUD ------
@@ -455,30 +524,62 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
 
     # ── LLAMADA A: solo si NO es salto intra-turno ────────────
     # Si venimos de un salto, el last_user_msg ya fue procesado por el nodo de perfil.
-    # Ejecutar Llamada A sobre él generaría extracciones incorrectas o vacías.
+    
     newly_extracted = {}
     updated_sim = {**current_sim}
-
+    
     if not is_intra_turn_jump and last_user_msg:
-        extracted: LoanSimExtraction = _sim_extractor.invoke([
+        # ------ 3. LLAMADA A - EXTRACCIÓN ROBUSTA ------
+        print(f"\n[DEBUG-SIM] Mensaje Usuario: '{last_user_msg}'")
+        
+        raw_response = _flux_generator.invoke([
             {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_SIM},
             {"role": "user",   "content": last_user_msg},
-        ]) or LoanSimExtraction(intencion="OTRO", razonamiento="Error")
+        ])
 
-        if extracted.intencion == "DATO_FINANCIERO":
-            if extracted.monto_solicitado is not None:
-                updated_sim["monto_solicitado"] = extracted.monto_solicitado
-                newly_extracted["monto_solicitado"] = extracted.monto_solicitado
-            if extracted.plazo_solicitado is not None:
-                updated_sim["plazo_solicitado"] = extracted.plazo_solicitado
-                newly_extracted["plazo_solicitado"] = extracted.plazo_solicitado
+        content_str = normalize_llm_response(raw_response.content)
+        
+        import json
+        import re
 
-        intencion_for_b = extracted.intencion
-        razonamiento_for_b = extracted.razonamiento
+        # Intento de parseo manual con Regex
+        match = re.search(r"\{.*\}", content_str, re.DOTALL)
+        
+        if match:
+            try:
+                json_str = match.group()
+                data = json.loads(json_str)
+                extracted = LoanSimExtraction(**data)
+            except Exception as e:
+                print(f"[!!!] Error parseando JSON en SIM: {e}")
+                extracted = LoanSimExtraction(intencion="OTRO", razonamiento="Error")
+        else:
+            print(f"[!!!] No se encontró JSON en SIM.")
+            extracted = LoanSimExtraction(intencion="OTRO", razonamiento="Error")
+
+        # ------ 4. MERGE DEFENSIVO ------
+        if extracted.razonamiento != "Error":
+            # Definimos qué valores NO son progreso (Centinelas)
+            SENTINELS = [0, "0", "DESCONOCIDO", None, "null"]
+            fields_to_process = ["monto_solicitado", "plazo_solicitado"]
+
+            for field in fields_to_process:
+                val = getattr(extracted, field, None)
+                # Solo actualizamos si el valor NO es un centinela
+                if val not in SENTINELS:
+                    updated_sim[field] = val
+                    newly_extracted[field] = val
+
+            intencion_for_b = extracted.intencion
+            razonamiento_for_b = extracted.razonamiento
+        else:
+            intencion_for_b = "OTRO"
+            razonamiento_for_b = f"Error de formato, LLM dijo: {content_str[:50]}"
+
     else:
-        # Salto intra-turno: no hay extracción; el contexto es solo la transición
-        intencion_for_b = "DATO_FINANCIERO"   # Neutro: el generador se guiará por just_completed
-        razonamiento_for_b = "Salto intra-turno desde perfil completo."
+        # Salto intra-turno o mensaje vacío
+        intencion_for_b = "DATO_FINANCIERO"
+        razonamiento_for_b = "Salto intra-turno desde perfil completo o inicio."
 
     # ── EVALUACIÓN DE COMPLETITUD ─────────────────────────────
     missing = _get_missing_sim_fields(updated_sim)
@@ -754,27 +855,30 @@ def _build_profile_generation_context(
     missing_labels = [field_labels[f] for f in missing]
     
     context = f"""
+    --- ENTRADA ACTUAL ---
     ÚLTIMO MENSAJE DEL USUARIO: "{last_msg}"
     ANÁLISIS DEL EXTRACTOR: {razonamiento}
 
     CONTEXTO PARA TU RESPUESTA:
-    
+    --- ENTRADA ACTUAL ---
     Usuario: {nombre}
     Intención detectada en su último mensaje: {intencion}
 
-    Datos del perfil YA CONOCIDOS (no volver a pedir):
+    DATOS RECIÉN EXTRAÍDOS (Confírmalos si aparecen aquí):
+    {chr(10).join(new_lines) if new_lines else "  - (ninguno nuevo detectado)"}
+
+    DATOS QUE YA TENÍAMOS:
     {chr(10).join(known_lines) if known_lines else "  - (ninguno aún)"}
 
-    Datos recién entregados en este turno (para celebrar/comentar si hay alguno):
-    {chr(10).join(new_lines) if new_lines else "  - (ninguno en este mensaje)"}
+    DATOS QUE FALTAN (Prioridad):
+    {chr(10).join(f"  - {l}" for l in missing_labels) if missing_labels else "  - (perfil completo)"}
 
-    Datos que AÚN FALTAN (pide exactamente el primero de la lista, no todos):
-    {chr(10).join(f"  - {l}" for l in missing_labels) if missing_labels else "  - (ninguno, perfil completo)"}
-
-    INSTRUCCIÓN: Genera la respuesta de Flux según este contexto. 
-    Si hay datos nuevos, celébrarlos brevemente. Luego pide solo el PRIMER dato faltante.
-    Si la intención es SALUDO u OTRO, responde con empatía y redirige amablemente a pedir el primer dato faltante.
-    Si la intención es PREGUNTA, reconoce la duda brevemente y redirige al proceso.
+    INSTRUCCIÓN DE FLUJO: Genera la respuesta de Flux según este contexto. 
+    1. Si el ANÁLISIS TÉCNICO indica que el usuario entregó un dato pero hay dudas (ej: "Error", "No estoy seguro", "Formato inválido"), NO digas que te mareaste. Di algo como: "Oye, te escuché lo de [dato], pero para dejarlo impecable en tu ficha, ¿me confirmas si es [valor]?" o pídelo de nuevo amablemente.
+    2. Si hay datos en 'DATOS RECIÉN EXTRAÍDOS', celébralos brevemente.
+    3. Pide solo el primer dato de la lista 'DATOS QUE FALTAN'.
+    4. Si la intención es SALUDO u OTRO, responde con empatía y redirige amablemente a pedir el primer dato faltante.
+    5. Si la intención es PREGUNTA, reconoce la duda brevemente y redirige al proceso.
     """
     return context
 
@@ -837,23 +941,30 @@ def _build_sim_generation_context(
     # Extensible: agregar elif para otros pasos futuros
 
     context = f"""
-    {transicion_msg}
+    --- ENTRADA ACTUAL ---
     ÚLTIMO MENSAJE DEL USUARIO: "{last_msg}"
     ANÁLISIS DEL EXTRACTOR: {razonamiento}
-    
+
     CONTEXTO PARA TU RESPUESTA:
-    
+    --- ENTRADA ACTUAL ---
     Usuario: {nombre}
-    Intención detectada: {intencion}
-    Datos de simulación YA CONOCIDOS (no volver a pedir):
+    Intención detectada en su último mensaje: {intencion}
+
+    DATOS RECIÉN EXTRAÍDOS (Confírmalos si aparecen aquí):
+    {chr(10).join(new_lines) if new_lines else "  - (ninguno nuevo detectado)"}
+
+    DATOS QUE YA TENÍAMOS:
     {chr(10).join(known_lines) if known_lines else "  - (ninguno aún)"}
-    Datos recién entregados en este turno (para celebrar/comentar si hay alguno):
-    {chr(10).join(new_lines) if new_lines else "  - (ninguno en este mensaje)"}
-    Datos que AÚN FALTAN (pide exactamente el primero de la lista, no todos):
-    {chr(10).join(f"  - {l}" for l in missing_labels) if missing_labels else "  - (completos)"}
-    INSTRUCCIÓN: Genera la respuesta de Flux según este contexto. 
-    Si hay datos nuevos, celébralos. Luego pide solo el PRIMER dato faltante.
-    Si la intención es SALUDO u OTRO, responde con empatía y redirige a pedir el primer dato faltante.
+
+    DATOS QUE FALTAN (Prioridad):
+    {chr(10).join(f"  - {l}" for l in missing_labels) if missing_labels else "  - (perfil completo)"}
+
+    INSTRUCCIÓN DE FLUJO: Genera la respuesta de Flux según este contexto. 
+    1. Si el ANÁLISIS TÉCNICO indica que el usuario entregó un dato pero hay dudas (ej: "Error", "No estoy seguro", "Formato inválido"), NO digas que te mareaste. Di algo como: "Oye, te escuché lo de [dato], pero para dejarlo impecable en tu ficha, ¿me confirmas si es [valor]?" o pídelo de nuevo amablemente.
+    2. Si hay datos en 'DATOS RECIÉN EXTRAÍDOS', celébralos brevemente.
+    3. Pide solo el primer dato de la lista 'DATOS QUE FALTAN'.
+    4. Si la intención es SALUDO u OTRO, responde con empatía y redirige amablemente a pedir el primer dato faltante.
+    5. Si la intención es PREGUNTA, reconoce la duda brevemente y redirige al proceso.
     """
     return context
 
