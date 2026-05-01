@@ -15,6 +15,7 @@ from app.graph.nodes.schemas.loan_schemas import LoanProfileExtraction, LoanSimE
 from app.infra.supabase import update_application_semaphores
 from app.modules.credit_eng import CreditEngine, PolicyRejectionError, PaymentCapacityError
 from app.utils.llm_utils import normalize_llm_response
+from app.graph.constants import CompletedStep
 
 # ======================================================================================================
 # LLM Y PROMPTS
@@ -373,8 +374,6 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
 
     # 7. ------ DECISIÓN: ¿Avance silencioso o Llamada B? ------
     if not missing:
-        # AVANCE SILENCIOSO: Todos los datos son válidos y completos.
-        # La llamada B NO se invoca. El grafo avanza al siguiente nodo.
         if application_id:
             update_application_semaphores(
                 application_id=application_id,
@@ -382,8 +381,22 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
                 node_status="SUCCESS",
                 engine_status="PENDING",
             )
-        output["session"]["profile_just_completed"] = True # ← Flag especial para el orquestador
-        return output # ← Return transaccional sin mensajes
+        # ── ESCRITURA DUAL de flags ───────────────────────────────
+        # 1. Histórica (persistente): el ruteador sabrá que el perfil está completo
+        current_progress = session.get("progress", {})
+        loan_progress = current_progress.get("loan", {})
+        updated_progress = {
+            **current_progress,
+            "loan": {**loan_progress, "profile_completed": True},
+        }
+        # 2. Volátil (1 turno): señal para el nodo destino del salto intra-turno
+        output["session"] = {
+            **output["session"],
+            "progress":           updated_progress,
+            "just_completed_step": CompletedStep.LOAN_PROFILE,
+            # current_node ya está en "LOAN_COLLECTING_PROFILE" desde output base
+        }
+        return output  # Sin mensajes: la arista condicional saltará a loan_collecting_sim
     
     # 8. ------ LLAMADA B - GENERACIÓN ------
     context = _build_profile_generation_context(
@@ -412,86 +425,107 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
 
 def loan_collecting_sim_node(state: FluxState) -> dict:
     """
-    Nodo LOAN_COLLECTING_SIMULATION: recolección de monto y plazo.
-    Aplica arquitectura de Doble Llamada y normalización de salida.
+    VERSIÓN 2.2 — Nodo LOAN_COLLECTING_SIMULATION con Ruteo Consciente.
+
+    CAMBIOS vs 2.1:
+      - Detecta salto intra-turno via just_completed_step == LOAN_PROFILE.
+      - Omite Llamada A en caso de salto (no hay mensaje nuevo del usuario).
+      - Lee just_completed_step en lugar de profile_just_completed (deprecated).
+      - Limpia just_completed_step en el return post-Llamada B.
+      - Escribe escritura dual al completar la simulación.
     """
     session    = state.get("session", {})
     collecting = state.get("collecting_data", {})
     prep       = state.get("preparation_data", {})
     messages   = state.get("messages", [])
-    just_finished_profile = session.get("profile_just_completed", False) # ← Recuperar flag
-    
+
+    just_completed = session.get("just_completed_step")   # ← v2.2
+    is_intra_turn_jump = (just_completed == CompletedStep.LOAN_PROFILE)
+
     current_sim = collecting.get("loan_sim", {})
     first_name  = prep.get("nombre", "").split()[0] if prep.get("nombre") else "amig@"
-    
-    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
-    
-    # 1. LLAMADA A - EXTRACCIÓN
-    extracted: LoanSimExtraction = _sim_extractor.invoke([
-        {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_SIM},
-        {"role": "user",   "content": last_user_msg},
-    ]) or LoanSimExtraction(intencion="OTRO", razonamiento="Error")
 
-    
-    # 2. MERGE DEFENSIVO (Versión Robusta)
+    last_user_msg = next(
+        (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
+    )
+
+    # ── LLAMADA A: solo si NO es salto intra-turno ────────────
+    # Si venimos de un salto, el last_user_msg ya fue procesado por el nodo de perfil.
+    # Ejecutar Llamada A sobre él generaría extracciones incorrectas o vacías.
     newly_extracted = {}
     updated_sim = {**current_sim}
 
-    if extracted.intencion == "DATO_FINANCIERO":
-        # Extraemos lo que el LLM dice haber encontrado
-        new_monto = extracted.monto_solicitado
-        new_plazo = extracted.plazo_solicitado
+    if not is_intra_turn_jump and last_user_msg:
+        extracted: LoanSimExtraction = _sim_extractor.invoke([
+            {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_SIM},
+            {"role": "user",   "content": last_user_msg},
+        ]) or LoanSimExtraction(intencion="OTRO", razonamiento="Error")
 
-        # REGLA DE ORO: Solo actualizamos si el LLM detectó ALGO nuevo (no es None)
-        # y aplicamos una política de "Solo Sobreescribir si es explícito"
-        
-        if new_monto is not None:
-            # Aquí puedes decidir: ¿Si ya tengo monto, dejo que el LLM lo cambie?
-            # En simulación es común que el usuario cambie de opinión ("mejor 2 palos")
-            # Así que lo mejor es confiar en el LLM SI Y SOLO SI el prompt es bueno.
-            updated_sim["monto_solicitado"] = new_monto
-            newly_extracted["monto_solicitado"] = new_monto
+        if extracted.intencion == "DATO_FINANCIERO":
+            if extracted.monto_solicitado is not None:
+                updated_sim["monto_solicitado"] = extracted.monto_solicitado
+                newly_extracted["monto_solicitado"] = extracted.monto_solicitado
+            if extracted.plazo_solicitado is not None:
+                updated_sim["plazo_solicitado"] = extracted.plazo_solicitado
+                newly_extracted["plazo_solicitado"] = extracted.plazo_solicitado
 
-        if new_plazo is not None:
-            updated_sim["plazo_solicitado"] = new_plazo
-            newly_extracted["plazo_solicitado"] = new_plazo
-    
-    # 3. EVALUACIÓN Y DECISIÓN
+        intencion_for_b = extracted.intencion
+        razonamiento_for_b = extracted.razonamiento
+    else:
+        # Salto intra-turno: no hay extracción; el contexto es solo la transición
+        intencion_for_b = "DATO_FINANCIERO"   # Neutro: el generador se guiará por just_completed
+        razonamiento_for_b = "Salto intra-turno desde perfil completo."
+
+    # ── EVALUACIÓN DE COMPLETITUD ─────────────────────────────
     missing = _get_missing_sim_fields(updated_sim)
-    
+
+    # ── OUTPUT BASE ───────────────────────────────────────────
     output = {
         "collecting_data": {**collecting, "loan_sim": updated_sim},
-        "session":         {**session, "current_node": "LOAN_COLLECTING_SIMULATION"},
+        "session": {
+            **session,
+            "current_node": "LOAN_COLLECTING_SIMULATION",
+            "just_completed_step": None,   # ← Limpieza anticipada (se sobreescribirá si sim completa)
+        },
     }
-    
+
+    # ── AVANCE SILENCIOSO (simulación completa) ───────────────
     if not missing:
-        # Avance silencioso al motor de crédito
+        current_progress = session.get("progress", {})
+        loan_progress = current_progress.get("loan", {})
+        output["session"] = {
+            **output["session"],
+            "progress": {
+                **current_progress,
+                "loan": {**loan_progress, "simulation_completed": True},
+            },
+            "just_completed_step": CompletedStep.LOAN_SIMULATION,
+            # La arista condicional saltará a loan_risk_engine
+        }
         return output
-    
-    # 4. LLAMADA B - GENERACIÓN
+
+    # ── LLAMADA B ─────────────────────────────────────────────
     context = _build_sim_generation_context(
         nombre=first_name,
-        intencion=extracted.intencion,
+        intencion=intencion_for_b,
         known_sim=updated_sim,
         missing=missing,
         newly_extracted=newly_extracted,
-        profile_just_completed=just_finished_profile, # ← Pasamos el flag
-        last_msg=last_user_msg,          # <--- Nuevo
-        razonamiento=extracted.razonamiento # <--- Nuevo
+        just_completed_step=just_completed,   # ← v2.2: reemplaza profile_just_completed
+        last_msg=last_user_msg,
+        razonamiento=razonamiento_for_b,
     )
-    
+
     flux_response = _flux_generator.invoke([
         {"role": "system", "content": SYSTEM_PROMPT_GENERATION_SIM},
         {"role": "user",   "content": context},
     ])
-    
-    # Usamos la utilidad de normalización que creamos antes
+
     clean_content = normalize_llm_response(flux_response.content)
     output["messages"] = [AIMessage(content=clean_content)]
-    
-    # IMPORTANTE: Reseteamos el flag para que solo ocurra una vez
-    output["session"]["profile_just_completed"] = False
-    
+    # just_completed_step ya se limpió en output base (= None): no reasignar aquí.
+    # La Llamada B ya lo consumió; la flag no debe sobrevivir al siguiente turno.
+
     return output
 
 
@@ -742,11 +776,18 @@ def _build_sim_generation_context(
     known_sim: dict,
     missing: list[str],
     newly_extracted: dict,
-    profile_just_completed: bool = False,
+    just_completed_step: str | None = None,
     last_msg: str = "",          # <--- Nuevo
     razonamiento: str = ""       # <--- Nuevo
 ) -> str:
-    """Versión especializada para la recolección de monto y plazo."""
+    """
+    Versión especializada para la recolección de monto y plazo.
+    CAMBIOS v2.2:
+      - Parámetro just_completed_step reemplaza profile_just_completed (bool).
+      - Genera instrucciones de transición para cualquier paso completado, no solo perfil.
+    """
+    from app.graph.constants import CompletedStep
+
     field_labels = {
         "monto_solicitado": "monto del crédito",
         "plazo_solicitado": "plazo en cuotas mensuales",
@@ -772,9 +813,19 @@ def _build_sim_generation_context(
     
     missing_labels = [field_labels[f] for f in missing]
     
+    # ── Mensaje de transición basado en qué se acaba de completar ──
     transicion_msg = ""
-    if profile_just_completed:
-        transicion_msg = "AVISO: El usuario acaba de completar su perfil exitosamente. NO saludes de nuevo; celebra brevemente el paso anterior y pide el monto."
+    if just_completed_step == CompletedStep.LOAN_PROFILE:
+        transicion_msg = (
+            "AVISO: El usuario acaba de completar su perfil financiero exitosamente. "
+            "NO saludes de nuevo; celebra brevemente ese hito y pide el MONTO del crédito."
+        )
+    elif just_completed_step == CompletedStep.LOAN_SIMULATION:
+        transicion_msg = (
+            "AVISO: El usuario acaba de completar los datos de simulación. "
+            "Indícale que calcularás su crédito de inmediato."
+        )
+    # Extensible: agregar elif para otros pasos futuros
 
     context = f"""
     {transicion_msg}
@@ -785,22 +836,16 @@ def _build_sim_generation_context(
     
     Usuario: {nombre}
     Intención detectada: {intencion}
-
     Datos de simulación YA CONOCIDOS (no volver a pedir):
     {chr(10).join(known_lines) if known_lines else "  - (ninguno aún)"}
-
     Datos recién entregados en este turno (para celebrar/comentar si hay alguno):
     {chr(10).join(new_lines) if new_lines else "  - (ninguno en este mensaje)"}
-
     Datos que AÚN FALTAN (pide exactamente el primero de la lista, no todos):
     {chr(10).join(f"  - {l}" for l in missing_labels) if missing_labels else "  - (completos)"}
-
     INSTRUCCIÓN: Genera la respuesta de Flux según este contexto. 
-    Si hay datos nuevos, celébrarlos brevemente. Luego pide solo el PRIMER dato faltante.
-    Si la intención es SALUDO u OTRO, responde con empatía y redirige amablemente a pedir el primer dato faltante.
-    Si la intención es PREGUNTA, reconoce la duda brevemente y redirige al proceso.
+    Si hay datos nuevos, celébralos. Luego pide solo el PRIMER dato faltante.
+    Si la intención es SALUDO u OTRO, responde con empatía y redirige a pedir el primer dato faltante.
     """
-
     return context
 
 

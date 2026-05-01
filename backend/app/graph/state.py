@@ -42,6 +42,35 @@ class UserData(TypedDict, total=False):
     user_status: str      # ACTIVE | BLOCKED_SECURITY | PROSPECT
     user_category: str | None  # START | MEDIUM | ADVANCE | None
 
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE B.1: ProgressData  [NUEVO en v2.2]
+# Historial de pasos completados por producto.
+# Escritura: nodos COLLECTING de cada producto (al completar un paso).
+# Lectura: edges.py → _SUCCESS_MAP para ruteo inter-turno.
+# Inmutable retroactivamente: una vez marcado True, nunca vuelve a False.
+# ══════════════════════════════════════════════════════════════
+
+class LoanProgress(TypedDict, total=False):
+    """Registro histórico de completitud del flujo de crédito."""
+    profile_completed:    bool   # True cuando loan_profile tiene todos los campos
+    simulation_completed: bool   # True cuando loan_sim tiene monto y plazo
+
+class AccountProgress(TypedDict, total=False):
+    """Registro histórico de completitud del flujo de cuenta corriente."""
+    profile_completed: bool
+
+class DapProgress(TypedDict, total=False):
+    """Registro histórico de completitud del flujo de depósito a plazo."""
+    data_completed: bool
+
+class ProgressData(TypedDict, total=False):
+    """
+    Contenedor raíz de progreso histórico por producto.
+    Cada sub-cajón es independiente; un producto NUNCA toca el cajón de otro.
+    """
+    loan:    LoanProgress
+    account: AccountProgress
+    dap:     DapProgress
 
 # ══════════════════════════════════════════════════════════════
 # NAMESPACE B: session
@@ -58,6 +87,8 @@ class SessionData(TypedDict, total=False):
     current_node: str
     previous_node: str | None
     is_transversal_active: bool
+    progress: ProgressData          # Historial persistente de pasos completados
+    just_completed_step: str | None # Flag volátil (1 turno): qué hito acaba de ocurrir
 
 
 # ══════════════════════════════════════════════════════════════
