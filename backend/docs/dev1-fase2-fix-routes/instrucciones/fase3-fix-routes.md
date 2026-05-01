@@ -1,70 +1,10 @@
-"""
-app/graph/edges.py
-─────────────────────────────────────────────────────────────
-Lógica de ruteo condicional entre nodos del Grafo FLUX.
+## IV. Fase 3 — `_SUCCESS_MAP` y Nueva Jerarquía de Prioridades en `edges.py`
 
-PROCESO: Define las funciones que LangGraph usa como Conditional Edges
-         para decidir, basándose en el State, qué nodo ejecutar a continuación.
+**Archivo:** `app/graph/edges.py`
 
-SALIDA:  Funciones que retornan el nombre del próximo nodo como string.
+### 4.1 Definición del `_SUCCESS_MAP`
 
-NOTA DE NOMENCLATURA:
-  Los strings que retornan estas funciones son IDs de nodo LangGraph (snake_case).
-  Deben coincidir exactamente con los nombres registrados en workflow.py.
-  Ver la tabla de nomenclatura en workflow.py para el mapeo completo.
-
-VERSIÓN: 2.1 — Jerarquía de ruteo con prioridad de reanudación.
-
-JERARQUÍA DE DECISIÓN (orden estricto):
-  P1. current_node activo  → bypass total, ir al nodo guardado.
-  P2. product_intent botón → ir al INIT del producto.
-  P3. ninguna señal         → intent_router (clasificación LLM).
-"""
-
-from app.graph.state import FluxState
-import logging
-from app.graph.constants import CompletedStep
-from langgraph.graph import END
-
-# ===================================================================
-# ========================== MAPAS DE RUTEO =========================
-# ===================================================================
-
-# Mapa de reanudación: current_node (UPPER) → ID LangGraph (snake_case)
-_RESUME_MAP = {
-    # Crédito de Consumo
-    "LOAN_INIT":                   "loan_init",
-    "LOAN_COLLECTING_PROFILE":     "loan_collecting_profile",
-    "LOAN_COLLECTING_SIMULATION":  "loan_collecting_simulation",
-    # Cuenta Corriente
-    "ACCOUNT_INIT":                "account_init",
-    "ACCOUNT_COLLECTING_PROFILE":  "account_collecting_profile",
-    # Depósito a Plazo
-    "DAP_INIT":                    "dap_init",
-    "DAP_COLLECT_DATA":            "dap_collect_data",
-}
-
-# Mapa de intención inicial: product_intent → ID LangGraph
-_INTENT_MAP = {
-    "LOAN":    "loan_init",
-    "ACCOUNT": "account_init",
-    "DAP":     "dap_init",
-}
-
-# Nodos válidos como destino del _SUCCESS_MAP.
-# Debe actualizarse al registrar nuevos nodos en workflow.py.
-_VALID_DESTINATION_NODES: frozenset[str] = frozenset({
-    "loan_collecting_profile",
-    "loan_collecting_simulation",
-    "loan_risk_engine",
-    "account_collecting_profile",
-    "account_evaluation_engine",
-    "dap_collect_data",
-    "dap_investment_engine",
-    "intent_router",
-    "general_response",
-})
-
+```python
 # Mapa de éxito: producto → {CompletedStep → ID LangGraph destino}
 # Propósito: dado un paso completado en el historial, indica el siguiente nodo lógico.
 # Es la capa de seguridad inter-turno que evita el bucle infinito.
@@ -80,13 +20,15 @@ _SUCCESS_MAP: dict[str, dict[str, str]] = {
         CompletedStep.DAP_DATA: "dap_investment_engine",
     },
 }
+```
 
+### 4.2 Helpers de ruteo
 
-# ===================================================================
-# ========================= HELPERS DE RUTEO ========================
-# ===================================================================
+```python
+import logging
 
 _routing_logger = logging.getLogger("flux.routing")
+
 
 def _infer_product_from_node(current_node: str) -> str | None:
     """Infiere el producto desde el current_node para detectar cambio de intención."""
@@ -113,11 +55,11 @@ def _get_completed_steps_for_product(progress: dict, product: str) -> list[str]:
         if product_progress.get("data_completed"):
             completed.append(CompletedStep.DAP_DATA)
     return completed
+```
 
-# ==================================================================================
-# ========================= FUNCIONES DE DECISIÓN DE ARISTA ========================
-# ==================================================================================
+### 4.3 Función `route_after_welcome` refactorizada
 
+```python
 def route_after_welcome(state: FluxState) -> str:
     """
     VERSIÓN 2.2 — Jerarquía de 4 prioridades.
@@ -169,10 +111,10 @@ def route_after_welcome(state: FluxState) -> str:
                         return next_node
                     else:
                         _routing_logger.error(
-                            f"P1 — CRÍTICO: Nodo destino '{next_node}' no registrado en el grafo. "
-                            f"Redirigiendo a 'intent_router' para recuperación."
+                            f"P1 — Nodo destino '{next_node}' no existe en el grafo. "
+                            f"Fallback a END."
                         )
-                        return "intent_router"
+                        return "end_fallback"  # Nodo de error genérico
 
     # ── P2: Reanudación estándar ──────────────────────────────
     if current_node in _RESUME_MAP:
@@ -184,56 +126,142 @@ def route_after_welcome(state: FluxState) -> str:
 
     # ── P4: Sin señales → clasificar ──────────────────────────
     return "intent_router"
+```
+
+### 4.4 Set de nodos destino válidos
+
+```python
+# Nodos válidos como destino del _SUCCESS_MAP.
+# Debe actualizarse al registrar nuevos nodos en workflow.py.
+_VALID_DESTINATION_NODES: frozenset[str] = frozenset({
+    "loan_collecting_profile",
+    "loan_collecting_simulation",
+    "loan_risk_engine",
+    "account_collecting_profile",
+    "account_evaluation_engine",
+    "dap_collect_data",
+    "dap_investment_engine",
+    "intent_router",
+    "general_response",
+})
+```
+
+### 4.5 Nota sobre `P1` vs Fase 4
+
+Con la Fase 4 correctamente implementada (aristas condicionales intra-turno), el `P1` de `edges.py` debería **raramente activarse** en condiciones normales. Su rol es de **cortafuegos inter-turno**: si por alguna razón (error de red, timeout, estado corrupto) el salto intra-turno no se completó y el `current_node` quedó desincronizado con el `progress`, P1 lo corrige en el siguiente turno.
+
+---
+
+### ✅ Tests Fase 3
+
+#### TEST 3.A — Prioridades en `route_after_welcome`
+
+```python
+# tests/unit/test_edges_v22.py
+from app.graph.edges import route_after_welcome
+from app.graph.constants import CompletedStep
 
 
-def route_after_intent(state: FluxState) -> str:
-    """
-    Ruteo post-INTENT_ROUTER_NODE. Sin cambios lógicos vs v1.0.
-    Centralizado aquí para usar _INTENT_MAP.
-    """
-    session = state.get("session", {})
-    product_intent = session.get("product_intent", "GENERAL")
+def _state(current_node="", product_intent=None, progress=None):
+    return {
+        "session": {
+            "current_node": current_node,
+            "product_intent": product_intent,
+            "progress": progress or {},
+        }
+    }
 
-    return _INTENT_MAP.get(product_intent, "general_response")
 
-def route_after_loan_collecting_profile(state: FluxState) -> str:
-    """
-    Decisión de arista post-loan_collecting_profile.
+# P0: Cambio de producto
+def test_p0_product_switch_loan_to_account():
+    """Usuario estaba en crédito y ahora quiere cuenta corriente."""
+    state = _state(
+        current_node="LOAN_COLLECTING_PROFILE",
+        product_intent="ACCOUNT"
+    )
+    assert route_after_welcome(state) == "account_init"
 
-    Si el perfil acaba de completarse (just_completed_step = LOAN_PROFILE),
-    salta directamente a loan_collecting_simulation en el mismo turno.
-    Si no, va a END para esperar el siguiente mensaje del usuario.
 
-    NOTA: No se usa progress aquí deliberadamente; just_completed_step es
-    la señal más fresca y específica del turno actual.
-    """
-    session = state.get("session", {})
-    just_completed = session.get("just_completed_step")
+def test_p0_same_product_does_not_trigger():
+    """Mismo producto: no es cambio, P0 no activa."""
+    state = _state(
+        current_node="LOAN_COLLECTING_PROFILE",
+        product_intent="LOAN",
+        progress={}
+    )
+    # Debe ir a P2 (reanudación) porque product matches
+    assert route_after_welcome(state) == "loan_collecting_profile"
 
-    if just_completed == CompletedStep.LOAN_PROFILE:
-        return "loan_collecting_simulation"
-    return END
 
-def route_after_loan_collecting_sim(state: FluxState) -> str:
-    """
-    Decisión de arista post-loan_collecting_simulation.
+# P1: Salto por éxito (seguridad inter-turno)
+def test_p1_success_jump_profile_completed():
+    """Perfil completado: P1 salta a simulación aunque current_node sea profile."""
+    state = _state(
+        current_node="LOAN_COLLECTING_PROFILE",
+        product_intent="LOAN",
+        progress={"loan": {"profile_completed": True}},
+    )
+    assert route_after_welcome(state) == "loan_collecting_simulation"
 
-    Si la simulación se completó (just_completed_step = LOAN_SIMULATION),
-    salta al motor de riesgo en el mismo turno.
-    Si no, va a END.
-    """
-    session = state.get("session", {})
-    just_completed = session.get("just_completed_step")
 
-    if just_completed == CompletedStep.LOAN_SIMULATION:
-        return "loan_risk_engine"
-    return END
+def test_p1_success_jump_simulation_completed():
+    state = _state(
+        current_node="LOAN_COLLECTING_SIMULATION",
+        product_intent="LOAN",
+        progress={"loan": {"profile_completed": True, "simulation_completed": True}},
+    )
+    assert route_after_welcome(state) == "loan_risk_engine"
 
-def route_after_account_collecting_profile(state: FluxState) -> str:
-    """Decisión de arista post-account_collecting_profile."""
-    session = state.get("session", {})
-    just_completed = session.get("just_completed_step")
 
-    if just_completed == CompletedStep.ACCOUNT_PROFILE:
-        return "account_evaluation_engine"
-    return END
+def test_p1_not_triggered_when_progress_empty():
+    """Sin progreso registrado, P1 no activa; se va a P2."""
+    state = _state(
+        current_node="LOAN_COLLECTING_PROFILE",
+        product_intent="LOAN",
+        progress={}
+    )
+    assert route_after_welcome(state) == "loan_collecting_profile"
+
+
+# P2: Reanudación estándar (sin progreso que dispare P1)
+def test_p2_resume_without_progress():
+    state = _state(current_node="LOAN_COLLECTING_SIMULATION")
+    assert route_after_welcome(state) == "loan_collecting_simulation"
+
+
+# P3 y P4: sin cambios respecto a tests anteriores
+def test_p3_product_intent_no_current_node():
+    state = _state(current_node="WELCOME_NODE", product_intent="DAP")
+    assert route_after_welcome(state) == "dap_init"
+
+
+def test_p4_no_signals_intent_router():
+    state = _state()
+    assert route_after_welcome(state) == "intent_router"
+```
+
+#### TEST 3.B — Fallback ante nodo destino inválido en `_SUCCESS_MAP`
+
+```python
+from unittest.mock import patch
+from app.graph import edges as edges_module
+
+
+def test_p1_fallback_if_destination_not_valid():
+    """Si el nodo destino del _SUCCESS_MAP no está en _VALID_DESTINATION_NODES,
+    el router no debe fallar; debe ir al fallback de error."""
+    original_valid = edges_module._VALID_DESTINATION_NODES
+    edges_module._VALID_DESTINATION_NODES = frozenset()  # Vaciar para simular nodo faltante
+
+    state = _state(
+        current_node="LOAN_COLLECTING_PROFILE",
+        product_intent="LOAN",
+        progress={"loan": {"profile_completed": True}},
+    )
+    result = route_after_welcome(state)
+    assert result == "end_fallback"
+
+    edges_module._VALID_DESTINATION_NODES = original_valid  # Restaurar
+```
+
+---

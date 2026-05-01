@@ -44,7 +44,7 @@ from app.graph.nodes.common import welcome_node, intent_router_node, general_res
 from app.graph.nodes.credit import loan_init_node, loan_collecting_profile_node, loan_collecting_sim_node, loan_risk_engine_node
 from app.graph.nodes.account import account_init_node, account_collecting_profile_node, account_evaluation_engine_node
 from app.graph.nodes.deposit import dap_init_node, dap_collect_data_node, dap_investment_engine_node
-from app.graph.edges import route_after_welcome, route_after_intent
+from app.graph.edges import route_after_welcome, route_after_intent, route_after_loan_collecting_profile, route_after_loan_collecting_sim, route_after_account_collecting_profile
 from app.infra.checkpointer import get_checkpointer
 
 
@@ -119,18 +119,47 @@ def build_graph() -> StateGraph:
     )
 
     # ── Rutas de Producto: INIT → ENGINE → END ────────────────
-    # Crédito de Consumo
-    graph.add_edge("loan_init",                  END)
-    graph.add_edge("loan_collecting_profile",    END)
-    graph.add_edge("loan_collecting_simulation", "loan_risk_engine")
-    graph.add_edge("loan_risk_engine",           END)
+    # Crédito: aristas condicionales de recolección
+    graph.add_edge("loan_init", END) 
+    
+    graph.add_conditional_edges(
+        "loan_collecting_profile",
+        route_after_loan_collecting_profile,
+        {
+            "loan_collecting_simulation": "loan_collecting_simulation",
+            END: END,
+        }
+    )
 
-    # Cuenta Corriente
-    graph.add_edge("account_init",               END)
-    graph.add_edge("account_collecting_profile", "account_evaluation_engine")
-    graph.add_edge("account_evaluation_engine",  END)
+    graph.add_conditional_edges(
+        "loan_collecting_simulation",
+        route_after_loan_collecting_sim,
+        {
+            "loan_risk_engine": "loan_risk_engine",
+            END: END,
+        }
+    )
+
+    graph.add_edge("loan_risk_engine", END)
+
+    # Cuenta: arista condicional de recolección
+    graph.add_edge("account_init", END)
+    
+    graph.add_conditional_edges(
+        "account_collecting_profile",
+        route_after_account_collecting_profile,
+        {
+            "account_evaluation_engine": "account_evaluation_engine",
+            END: END,
+        }
+    )
+
+    graph.add_edge("account_evaluation_engine", END)
 
     # Depósito a Plazo
+    # DAP: dap_collect_data ya tiene edge fijo a dap_investment_engine
+    # (DAP no tiene paso de perfil separado, el salto ocurre diferente)
+    # graph.add_edge("dap_collect_data", "dap_investment_engine") — mantener
     graph.add_edge("dap_init",                   "dap_collect_data")
     graph.add_edge("dap_collect_data",           "dap_investment_engine")
     graph.add_edge("dap_investment_engine",      END)

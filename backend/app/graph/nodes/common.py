@@ -175,10 +175,15 @@ def welcome_node(state: FluxState) -> dict:
                 engine_status="PENDING"
             )
         return {
-            "messages": [AIMessage(content=welcome_text)],
-            "session": {**session, "current_node": "WELCOME_NODE"},
-            "preparation_data": preparation_data,
-        }
+        "messages": [AIMessage(content=welcome_text)],
+        "session": {
+            **session,
+            "current_node": "WELCOME_NODE",
+            "progress": session.get("progress", {}),          # ← Inicializar si no existe
+            "just_completed_step": None,                       # ← Siempre limpio al inicio
+        },
+        "preparation_data": preparation_data,
+    }
 
 # ── INTENT_ROUTER_NODE ────────────────────────────────────────
 def intent_router_node(state: FluxState) -> dict:
