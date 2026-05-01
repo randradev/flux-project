@@ -416,6 +416,10 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
     # Normalizar ANTES de guardar en el State
     clean_content = normalize_llm_response(flux_response.content)
 
+    # Si después de todo sigue vacío, aplicamos el fallback de seguridad
+    if not clean_content:
+        clean_content = f"¡Oye {first_name}! Me perdí un poquito. ¿Podrías repetirme esa parte sobre tu {missing[0]}?"
+
     # 9. ------ RETURN TRANSACCIONAL ------
     # Un único return con todos los cambios al State.
     output["messages"] = [AIMessage(content=clean_content)]
@@ -522,6 +526,11 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
     ])
 
     clean_content = normalize_llm_response(flux_response.content)
+
+    # Si después de todo sigue vacío, aplicamos el fallback de seguridad
+    if not clean_content:
+        clean_content = f"¡Oye {first_name}! Me perdí un poquito. ¿Podrías repetirme esa parte sobre tu {missing[0]}?"
+
     output["messages"] = [AIMessage(content=clean_content)]
     # just_completed_step ya se limpió en output base (= None): no reasignar aquí.
     # La Llamada B ya lo consumió; la flag no debe sobrevivir al siguiente turno.
