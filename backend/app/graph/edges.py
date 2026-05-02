@@ -31,11 +31,19 @@ from langgraph.graph import END
 # ===================================================================
 
 # Mapa de reanudación: current_node (UPPER) → ID LangGraph (snake_case)
+# VERSIÓN 2.0: Nodos de oferta, formalización y excepciones de crédito agregados.
 _RESUME_MAP = {
-    # Crédito de Consumo
+    # Crédito de Consumo — Recolección
     "LOAN_INIT":                   "loan_init",
     "LOAN_COLLECTING_PROFILE":     "loan_collecting_profile",
     "LOAN_COLLECTING_SIMULATION":  "loan_collecting_simulation",
+    # Crédito de Consumo — Evaluación y Oferta (NUEVOS)
+    "LOAN_PRE_APPROVED":           "loan_pre_approved",
+    "LOAN_OTP_VALIDATION":         "loan_otp_validation",
+    # NOTA: LOAN_RISK_ENGINE y LOAN_FORMALIZATION son nodos de servicio automáticos.
+    # No tienen reanudación por turno: si el proceso se interrumpe en ellos,
+    # la reanudación ocurre vía _SUCCESS_MAP desde el paso previo.
+
     # Cuenta Corriente
     "ACCOUNT_INIT":                "account_init",
     "ACCOUNT_COLLECTING_PROFILE":  "account_collecting_profile",
@@ -52,26 +60,46 @@ _INTENT_MAP = {
 }
 
 # Nodos válidos como destino del _SUCCESS_MAP.
-# Debe actualizarse al registrar nuevos nodos en workflow.py.
+# VERSIÓN 2.0: Nodos de crédito completo agregados.
 _VALID_DESTINATION_NODES: frozenset[str] = frozenset({
+    # Crédito
     "loan_collecting_profile",
     "loan_collecting_simulation",
     "loan_risk_engine",
+    "loan_pre_approved",
+    "loan_otp_validation",
+    "loan_formalization",
+    "loan_completed",
+    "loan_rejected_policy",
+    "loan_security_block",
+    "loan_closed_by_user",
+    # Cuenta Corriente
     "account_collecting_profile",
     "account_evaluation_engine",
+    # DAP
     "dap_collect_data",
     "dap_investment_engine",
+    # Transversales
     "intent_router",
     "general_response",
 })
 
 # Mapa de éxito: producto → {CompletedStep → ID LangGraph destino}
-# Propósito: dado un paso completado en el historial, indica el siguiente nodo lógico.
-# Es la capa de seguridad inter-turno que evita el bucle infinito.
+# VERSIÓN 2.0: Flujo completo de crédito definido.
 _SUCCESS_MAP: dict[str, dict[str, str]] = {
     "LOAN": {
+        # Recolección
         CompletedStep.LOAN_PROFILE:    "loan_collecting_simulation",
         CompletedStep.LOAN_SIMULATION: "loan_risk_engine",
+        # Evaluación → Oferta
+        CompletedStep.LOAN_RISK_SUCCESS:  "loan_pre_approved",
+        CompletedStep.LOAN_RISK_REJECTED: "loan_rejected_policy",
+        # Oferta → OTP
+        CompletedStep.LOAN_PRE_APPROVED:  "loan_otp_validation",
+        CompletedStep.LOAN_CLOSED_BY_USER: "loan_closed_by_user",
+        # OTP → Formalización
+        CompletedStep.LOAN_OTP_SUCCESS:   "loan_formalization",
+        CompletedStep.LOAN_SECURITY_BLOCK: "loan_security_block",
     },
     "ACCOUNT": {
         CompletedStep.ACCOUNT_PROFILE: "account_evaluation_engine",
@@ -80,7 +108,6 @@ _SUCCESS_MAP: dict[str, dict[str, str]] = {
         CompletedStep.DAP_DATA: "dap_investment_engine",
     },
 }
-
 
 # ===================================================================
 # ========================= HELPERS DE RUTEO ========================
