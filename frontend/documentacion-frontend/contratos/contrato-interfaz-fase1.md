@@ -54,7 +54,7 @@ El frontend debe monitorear el evento `node_transition` para conocer la ubicaci�
 1.  **`welcome`**: El sistema está saludando o recuperando el contexto de una sesión previa.
 2.  **`intent_router`**: El orquestador está analizando el mensaje para clasificar la intención (Crédito, Cuenta, DAP o General).
 3.  **`general_response`**: El sistema está respondiendo a una consulta que no es un flujo de producto financiero.
-4.  **`loan_init` / `account_init` / `dap_init`**: El usuario ha entrado al "punto de partida" de un producto (Stubs de Fase 1).
+4.  **`loan_entry` / `account_entry` / `dap_entry`**: El usuario ha entrado al "punto de partida" de un producto (Stubs de Fase 1).
 
 ---
 
