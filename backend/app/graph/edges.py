@@ -63,6 +63,7 @@ _INTENT_MAP = {
 # VERSIÓN 2.0: Nodos de crédito completo agregados.
 _VALID_DESTINATION_NODES: frozenset[str] = frozenset({
     # Crédito
+    "loan_init",
     "loan_collecting_profile",
     "loan_collecting_simulation",
     "loan_risk_engine",
@@ -74,9 +75,11 @@ _VALID_DESTINATION_NODES: frozenset[str] = frozenset({
     "loan_security_block",
     "loan_closed_by_user",
     # Cuenta Corriente
+    "account_init",
     "account_collecting_profile",
     "account_evaluation_engine",
     # DAP
+    "dap_init",
     "dap_collect_data",
     "dap_investment_engine",
     # Transversales
@@ -144,6 +147,10 @@ def _get_completed_steps_for_product(progress: dict, product: str) -> list[str]:
 # ==================================================================================
 # ========================= FUNCIONES DE DECISIÓN DE ARISTA ========================
 # ==================================================================================
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DECISIONES DE ARISTAS NODOS GENERALES
+# ──────────────────────────────────────────────────────────────────────────────────────
 
 def route_after_welcome(state: FluxState) -> str:
     """
@@ -223,6 +230,10 @@ def route_after_intent(state: FluxState) -> str:
 
     return _INTENT_MAP.get(product_intent, "general_response")
 
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DECISIONES DE ARISTAS NODOS DE CRÉDITO DE CONSUMO
+# ──────────────────────────────────────────────────────────────────────────────────────
+
 def route_after_loan_collecting_profile(state: FluxState) -> str:
     """
     Decisión de arista post-loan_collecting_profile.
@@ -255,6 +266,90 @@ def route_after_loan_collecting_sim(state: FluxState) -> str:
     if just_completed == CompletedStep.LOAN_SIMULATION:
         return "loan_risk_engine"
     return END
+
+def route_after_loan_risk_engine(state: FluxState) -> str:
+    """
+    Decisión de arista post-loan_risk_engine.
+
+    El motor de riesgo es un nodo de servicio automático: siempre completa
+    su trabajo en el mismo turno y emite exactamente uno de dos CompletedStep:
+      - LOAN_RISK_SUCCESS  → loan_pre_approved
+      - LOAN_RISK_REJECTED → loan_rejected_policy
+
+    NOTA: Este edge NO tiene rama END porque loan_risk_engine nunca
+    espera input del usuario. Si just_completed_step es None o inesperado,
+    se redirige a loan_rejected_policy como fallback seguro (evita loop).
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.LOAN_RISK_SUCCESS:
+        return "loan_pre_approved"
+    if just_completed == CompletedStep.LOAN_RISK_REJECTED:
+        return "loan_rejected_policy"
+
+    # Fallback defensivo: si el motor no emitió señal, redirigir a rechazo
+    _routing_logger.warning(
+        f"route_after_loan_risk_engine: just_completed_step='{just_completed}' "
+        "inesperado. Redirigiendo a 'loan_rejected_policy' como fallback."
+    )
+    return "loan_rejected_policy"
+
+
+def route_after_loan_pre_approved(state: FluxState) -> str:
+    """
+    Decisión de arista post-loan_pre_approved.
+
+    Este nodo espera la decisión del usuario (ACCEPTED / REJECTED).
+    La señal viaja en just_completed_step:
+      - LOAN_PRE_APPROVED  → loan_otp_validation  (usuario aceptó)
+      - LOAN_CLOSED_BY_USER → loan_closed_by_user  (usuario rechazó)
+      - None               → END                   (primer turno: espera respuesta)
+
+    REGLA: Si el nodo acaba de generar la tarjeta de transparencia y aún
+    no hay respuesta del usuario, just_completed_step será None → END.
+    En el siguiente turno, el nodo vuelve a ejecutarse, lee la respuesta
+    y emite el CompletedStep correspondiente.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.LOAN_PRE_APPROVED:
+        return "loan_otp_validation"
+    if just_completed == CompletedStep.LOAN_CLOSED_BY_USER:
+        return "loan_closed_by_user"
+
+    return END  # Esperar respuesta del usuario
+
+
+def route_after_loan_otp_validation(state: FluxState) -> str:
+    """
+    Decisión de arista post-loan_otp_validation.
+
+    El nodo OTP espera que el usuario ingrese el código.
+    La señal viaja en just_completed_step:
+      - LOAN_OTP_SUCCESS   → loan_formalization    (código correcto)
+      - LOAN_SECURITY_BLOCK → loan_security_block  (3 intentos fallidos)
+      - None               → END                   (código incorrecto, reintento)
+
+    DISEÑO DE RETENCIÓN: Cuando el código es incorrecto pero hay intentos
+    disponibles, el nodo actualiza el contador en auth_control y retorna
+    sin setear just_completed_step → este edge retorna END → el grafo espera
+    otro turno → el nodo OTP vuelve a ejecutarse en el siguiente mensaje.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.LOAN_OTP_SUCCESS:
+        return "loan_formalization"
+    if just_completed == CompletedStep.LOAN_SECURITY_BLOCK:
+        return "loan_security_block"
+
+    return END  # Código incorrecto: esperar reintento del usuario
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DECISIONES DE ARISTAS NODOS DE CUENTA CORRIENTE
+# ──────────────────────────────────────────────────────────────────────────────────────
 
 def route_after_account_collecting_profile(state: FluxState) -> str:
     """Decisión de arista post-account_collecting_profile."""
