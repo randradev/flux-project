@@ -14,10 +14,23 @@ class CompletedStep:
     Flag volátil: vive exactamente un turno.
     Se setea al completar un paso; se limpia en el return del nodo generador.
     """
+    # ── Recolección (ya existentes) ───────────────────────────
     LOAN_PROFILE    = "LOAN_PROFILE"
     LOAN_SIMULATION = "LOAN_SIMULATION"
     ACCOUNT_PROFILE = "ACCOUNT_PROFILE"
     DAP_DATA        = "DAP_DATA"
+
+    # ── Evaluación y Oferta (NUEVOS) ──────────────────────────
+    LOAN_RISK_SUCCESS  = "LOAN_RISK_SUCCESS"   # Motor calculó y aprobó
+    LOAN_RISK_REJECTED = "LOAN_RISK_REJECTED"  # Motor calculó y rechazó por política
+
+    # ── Formalización (NUEVOS) ────────────────────────────────
+    LOAN_PRE_APPROVED  = "LOAN_PRE_APPROVED"   # Usuario aceptó la oferta
+    LOAN_OTP_SUCCESS   = "LOAN_OTP_SUCCESS"    # OTP validado correctamente
+
+    # ── Excepciones (NUEVOS) ──────────────────────────────────
+    LOAN_SECURITY_BLOCK  = "LOAN_SECURITY_BLOCK"   # 3 intentos OTP fallidos
+    LOAN_CLOSED_BY_USER  = "LOAN_CLOSED_BY_USER"   # Usuario rechazó la oferta
 
 
 class ProductPrefix:

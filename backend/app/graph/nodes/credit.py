@@ -733,6 +733,403 @@ def loan_risk_engine_node(state: FluxState) -> dict:
     }
 
 # ======================================================================================================
+# STUBS — NODOS POST-RISK (v3.0)
+# ======================================================================================================
+# Cada stub cumple el contrato mínimo:
+#   1. Actualizar session["current_node"] con el valor UPPER correspondiente.
+#   2. Limpiar session["just_completed_step"] (flag volátil de turno anterior).
+#   3. Retornar el estado con los campos modificados.
+#
+# La lógica de negocio completa se implementará en sprints posteriores.
+# ======================================================================================================
+
+import datetime as _dt  # Alias para evitar colisión con nombres de variables locales
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# LOAN_PRE_APPROVED — Muestra la Tarjeta de Transparencia al usuario
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def loan_pre_approved_node(state: FluxState) -> dict:
+    """
+    Stub: LOAN_PRE_APPROVED.
+
+    Responsabilidades finales:
+      - Leer evaluation_results["loan_engine"] y formatear la oferta.
+      - Mostrar la Tarjeta de Transparencia (monto, plazo, cuota, CAE, CTC).
+      - Esperar la decisión del usuario (ACCEPTED / REJECTED).
+      - Si ACCEPTED: setear just_completed_step = LOAN_PRE_APPROVED
+                     y escribir offer_data["loan"]["pre_approval_status"] = "ACCEPTED".
+      - Si REJECTED: setear just_completed_step = LOAN_CLOSED_BY_USER.
+    """
+    session = state.get("session", {})
+    nombre  = state.get("preparation_data", {}).get("nombre", "")
+
+    # Leer resultado del motor para construir el mensaje (stub: sin cálculo real)
+    engine_result = state.get("evaluation_results", {}).get("loan_engine", {})
+    monto    = engine_result.get("monto_aprobado", 0)
+    cuota    = engine_result.get("cuota_mensual", 0)
+    plazo    = engine_result.get("plazo_aprobado", 0)
+    cae      = engine_result.get("cae", 0.0)
+    ctc      = engine_result.get("ctc", 0)
+
+    mensaje_oferta = (
+        f"🎉 ¡{nombre}, tu crédito fue pre-aprobado!\n\n"
+        f"**Resumen de tu oferta:**\n"
+        f"- Monto aprobado: ${monto:,} CLP\n"
+        f"- Cuota mensual: ${cuota:,} CLP\n"
+        f"- Plazo: {plazo} meses\n"
+        f"- CAE: {cae:.2%}\n"
+        f"- Costo Total del Crédito: ${ctc:,} CLP\n\n"
+        "¿Aceptas esta oferta? Responde **Aceptar** o **Rechazar**."
+    )
+
+    # STUB: Simula aceptación automática para pruebas de ruteo.
+    # En producción, este nodo debe esperar el turno del usuario y
+    # evaluar su respuesta antes de setear just_completed_step.
+    # ─── REEMPLAZAR por lógica real en Sprint correspondiente ───
+    just_completed = CompletedStep.LOAN_PRE_APPROVED  # stub: siempre acepta
+    # ────────────────────────────────────────────────────────────
+
+    from langchain_core.messages import AIMessage
+    return {
+        "session": {
+            **session,
+            "current_node":      "LOAN_PRE_APPROVED",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": just_completed,
+        },
+        "offer_data": {
+            "loan": {
+                "pre_approval_status": "ACCEPTED",
+                "timestamp_acceptance": _dt.datetime.utcnow().isoformat(),
+            }
+        },
+        "messages": [AIMessage(content=mensaje_oferta)],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# LOAN_OTP_VALIDATION — Validación del código enviado por email
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def loan_otp_validation_node(state: FluxState) -> dict:
+    """
+    Stub: LOAN_OTP_VALIDATION.
+
+    Responsabilidades finales:
+      - Al entrar por primera vez: generar el OTP (6 dígitos) y enviarlo por email.
+      - Leer auth_control["otp_user_input"] del turno actual.
+      - Comparar con auth_control["otp_generated"].
+      - Si coincide: setear just_completed_step = LOAN_OTP_SUCCESS.
+      - Si falla y intentos < 3: incrementar otp_attempts, pedir reintento.
+      - Si falla y intentos == 3: setear just_completed_step = LOAN_SECURITY_BLOCK.
+    """
+    session      = state.get("session", {})
+    auth_control = state.get("auth_control", {})
+    nombre       = state.get("preparation_data", {}).get("nombre", "")
+    mail         = state.get("preparation_data", {}).get("mail", "")
+
+    # STUB: Simula validación exitosa para pruebas de ruteo.
+    # ─── REEMPLAZAR por lógica real en Sprint correspondiente ───
+    just_completed = CompletedStep.LOAN_OTP_SUCCESS  # stub: siempre válido
+    mensaje = (
+        f"✅ ¡Código verificado, {nombre}! "
+        "Estamos generando tu contrato..."
+    )
+    # ────────────────────────────────────────────────────────────
+
+    from langchain_core.messages import AIMessage
+    return {
+        "session": {
+            **session,
+            "current_node":      "LOAN_OTP_VALIDATION",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": just_completed,
+        },
+        "auth_control": {
+            **auth_control,
+            "otp_attempts": auth_control.get("otp_attempts", 0),
+        },
+        "messages": [AIMessage(content=mensaje)],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# LOAN_FORMALIZATION — Generación y Sellado del Contrato PDF
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def loan_formalization_node(state: FluxState) -> dict:
+    """
+    Stub: LOAN_FORMALIZATION.
+
+    Responsabilidades finales:
+      - Recopilar datos del motor (monto, plazo, cuota, tasa) y del usuario (nombre, rut).
+      - Generar el PDF del contrato con ReportLab.
+      - Calcular hash SHA-256 del PDF generado.
+      - Escribir en offer_data["loan"]: file_contrato_path, hash_sha256, contract_status.
+      - Si SIGNED_AND_STAMPED: continuar a loan_completed (via edge fijo).
+      - Si GENERATION_FAILED: redirigir a SERVICE_ERROR (futuro).
+    """
+    session = state.get("session", {})
+
+    # STUB: Simula contrato generado exitosamente.
+    # ─── REEMPLAZAR por lógica real (ReportLab + hashlib) ───────
+    fake_path   = "/tmp/contrato_stub.pdf"
+    fake_hash   = "a" * 64  # SHA-256 de 64 hex chars
+    contract_ok = True
+    # ────────────────────────────────────────────────────────────
+
+    from langchain_core.messages import AIMessage
+    return {
+        "session": {
+            **session,
+            "current_node":      "LOAN_FORMALIZATION",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": None,  # Nodo de servicio: no emite CompletedStep propio
+        },
+        "offer_data": {
+            "loan": {
+                **state.get("offer_data", {}).get("loan", {}),
+                "file_contrato_path": fake_path,
+                "hash_sha256":        fake_hash,
+                "contract_status":    "SIGNED_AND_STAMPED" if contract_ok else "GENERATION_FAILED",
+            }
+        },
+        "messages": [AIMessage(content="📄 Contrato generado. Procesando cierre...")],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# LOAN_COMPLETED — Estado Final Exitoso
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def loan_completed_node(state: FluxState) -> dict:
+    """
+    Stub: LOAN_COMPLETED.
+
+    Responsabilidades finales:
+      - Leer offer_data["loan"] y construir el mensaje de felicitaciones.
+      - Escribir flow_result con status_code = "SUCCESS".
+      - Poblar offer_data["loan"]["display_data"] para el Frontend.
+      - Limpiar current_node (flujo terminado).
+    """
+    session    = state.get("session", {})
+    nombre     = state.get("preparation_data", {}).get("nombre", "")
+    offer      = state.get("offer_data", {}).get("loan", {})
+    file_url   = offer.get("file_contrato_path", "")
+    sha256     = offer.get("hash_sha256", "")
+    engine     = state.get("evaluation_results", {}).get("loan_engine", {})
+    monto      = engine.get("monto_aprobado", 0)
+
+    mensaje = (
+        f"🥳 ¡Felicitaciones, {nombre}! Tu **Crédito de Consumo** de "
+        f"**${monto:,} CLP** está formalizado.\n\n"
+        f"📥 [Descarga tu contrato]({file_url})\n"
+        f"🔐 Hash de seguridad: `{sha256[:16]}...`"
+    )
+
+    from langchain_core.messages import AIMessage
+    return {
+        "session": {
+            **session,
+            "current_node":      "LOAN_COMPLETED",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": None,
+        },
+        "flow_result": {
+            "status_code":  "SUCCESS",
+            "close_reason": None,
+            "product_name": "Crédito de Consumo",
+            "closed_at":    _dt.datetime.utcnow().isoformat(),
+        },
+        "offer_data": {
+            "loan": {
+                **offer,
+                "display_data": {
+                    "download_url":  file_url,
+                    "main_detail":   f"Monto: ${monto:,} CLP",
+                    "security_hash": sha256,
+                    "reason":        None,
+                }
+            }
+        },
+        "messages": [AIMessage(content=mensaje)],
+    }
+
+# ======================================================================================================
+# STUBS — NODOS MANEJO DE ERRORES Y EXCEPCIONES (v3.0)
+# ======================================================================================================
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# LOAN_REJECTED_POLICY — Rechazo por Política de Crédito
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+_REJECTION_MESSAGES = {
+    "ERR_EDAD":           "lamentablemente necesitas ser mayor de 18 años para solicitar un crédito con nosotros",
+    "ERR_RENTA":          "tu renta declarada está por debajo del mínimo que requerimos para este producto",
+    "ERR_ANTIGUEDAD":     "necesitas al menos 6 meses de antigüedad laboral para calificar",
+    "ERR_SCORING":        "tu perfil de riesgo actual no cumple los requisitos de nuestra política de crédito",
+    "ERR_CAPACIDAD_PAGO": "la cuota mensual supera el 30% de tu renta, por lo que no podemos aprobar esta solicitud",
+}
+
+def loan_rejected_policy_node(state: FluxState) -> dict:
+    """
+    Stub: LOAN_REJECTED_POLICY.
+
+    Responsabilidades finales:
+      - Leer evaluation_results["loan_engine"]["motivo_rechazo"].
+      - Generar un mensaje de rechazo empático y personalizado.
+      - Escribir flow_result con status_code = "REJECTED".
+      - Poblar offer_data["loan"]["display_data"]["reason"].
+    """
+    session = state.get("session", {})
+    nombre  = state.get("preparation_data", {}).get("nombre", "")
+    engine  = state.get("evaluation_results", {}).get("loan_engine", {})
+    motivo  = engine.get("motivo_rechazo", "ERR_SCORING")
+
+    razon_legible = _REJECTION_MESSAGES.get(
+        motivo,
+        "tu solicitud no pudo ser aprobada en este momento"
+    )
+    mensaje = (
+        f"😔 {nombre}, revisamos tu información con cuidado y, "
+        f"{razon_legible}.\n\n"
+        "No te desanimes: puedes volver a intentarlo cuando tu situación cambie. "
+        "¡Acá vamos a estar!"
+    )
+
+    from langchain_core.messages import AIMessage
+    return {
+        "session": {
+            **session,
+            "current_node":      "LOAN_REJECTED_POLICY",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": None,
+        },
+        "flow_result": {
+            "status_code":  "REJECTED",
+            "close_reason": motivo,
+            "product_name": "Crédito de Consumo",
+            "closed_at":    _dt.datetime.utcnow().isoformat(),
+        },
+        "offer_data": {
+            "loan": {
+                "display_data": {
+                    "download_url":  None,
+                    "main_detail":   None,
+                    "security_hash": None,
+                    "reason":        motivo,
+                }
+            }
+        },
+        "messages": [AIMessage(content=mensaje)],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# LOAN_SECURITY_BLOCK — Bloqueo por Múltiples Intentos OTP Fallidos
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def loan_security_block_node(state: FluxState) -> dict:
+    """
+    Stub: LOAN_SECURITY_BLOCK.
+
+    Responsabilidades finales:
+      - Registrar el bloqueo en auth_control con block_timestamp.
+      - Actualizar user_status en DB a "BLOCKED_SECURITY" (vía Supabase).
+      - Escribir flow_result con status_code = "SECURITY_BLOCKED".
+      - Este nodo es TERMINAL: no hay retorno al flujo de crédito.
+    """
+    session      = state.get("session", {})
+    auth_control = state.get("auth_control", {})
+    nombre       = state.get("preparation_data", {}).get("nombre", "")
+    now_iso      = _dt.datetime.utcnow().isoformat()
+
+    mensaje = (
+        f"🔒 {nombre}, hemos detectado múltiples intentos fallidos de validación. "
+        "Por tu seguridad, esta solicitud ha sido bloqueada temporalmente.\n\n"
+        "Recibirás un correo con instrucciones para desbloquear tu cuenta. "
+        "Si crees que esto es un error, contáctanos."
+    )
+
+    from langchain_core.messages import AIMessage
+    return {
+        "session": {
+            **session,
+            "current_node":      "LOAN_SECURITY_BLOCK",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": None,
+        },
+        "auth_control": {
+            **auth_control,
+            "security_blocked": True,
+            "block_timestamp":  now_iso,
+        },
+        "flow_result": {
+            "status_code":  "SECURITY_BLOCKED",
+            "close_reason": "MAX_OTP_ATTEMPTS",
+            "product_name": "Crédito de Consumo",
+            "closed_at":    now_iso,
+        },
+        "messages": [AIMessage(content=mensaje)],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# LOAN_CLOSED_BY_USER — Cierre Voluntario (Usuario rechazó la oferta)
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def loan_closed_by_user_node(state: FluxState) -> dict:
+    """
+    Stub: LOAN_CLOSED_BY_USER.
+
+    Responsabilidades finales:
+      - Leer el último estado alcanzado (previous_node) para analytics.
+      - Leer evaluation_results["loan_engine"] para capturar monto y cuota rechazados.
+      - Escribir flow_result con status_code = "CLOSED_BY_USER".
+      - Mensaje empático de despedida.
+    """
+    session = state.get("session", {})
+    nombre  = state.get("preparation_data", {}).get("nombre", "")
+    engine  = state.get("evaluation_results", {}).get("loan_engine", {})
+    monto   = engine.get("monto_aprobado", 0)
+    cuota   = engine.get("cuota_mensual", 0)
+    now_iso = _dt.datetime.utcnow().isoformat()
+
+    mensaje = (
+        f"Entendido, {nombre}. Si en algún momento cambias de opinión, "
+        "¡acá vamos a estar para ayudarte! 👋"
+    )
+
+    from langchain_core.messages import AIMessage
+    return {
+        "session": {
+            **session,
+            "current_node":      "LOAN_CLOSED_BY_USER",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": None,
+        },
+        "flow_result": {
+            "status_code":  "CLOSED_BY_USER",
+            "close_reason": "USER_REJECTED_OFFER",
+            "product_name": "Crédito de Consumo",
+            "closed_at":    now_iso,
+        },
+        "offer_data": {
+            "loan": {
+                "display_data": {
+                    "download_url":  None,
+                    "main_detail":   f"Monto rechazado: ${monto:,} CLP",
+                    "security_hash": None,
+                    "reason":        "USER_REJECTED_OFFER",
+                }
+            }
+        },
+        "messages": [AIMessage(content=mensaje)],
+    }
+
+# ======================================================================================================
 # HELPERS DEL FLUJO DE CREDITO DE CONSUMO
 # ======================================================================================================
 
