@@ -1,0 +1,23 @@
+
+**1. Instalar dependencias** (primera vez):
+
+npm install
+
+
+**2. Ejecutar en desarrollo:**
+
+npm run dev
+
+Abrirá el servidor en `http://127.0.0.1:5173` (o el puerto que asigne Vite)
+
+**3. Compilar para producción:**
+
+npm run build
+
+
+**4. Previsualizar la compilación:**
+
+npm run preview
+
+**5. cerrar el localhost server.
+alt + c
