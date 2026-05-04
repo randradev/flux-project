@@ -136,6 +136,8 @@ def _get_completed_steps_for_product(progress: dict, product: str) -> list[str]:
             completed.append(CompletedStep.LOAN_PROFILE)
         if product_progress.get("simulation_completed"):
             completed.append(CompletedStep.LOAN_SIMULATION)
+        if product_progress.get("risk_engine_completed"):
+            completed.append(CompletedStep.LOAN_RISK_SUCCESS)
     elif product == "ACCOUNT":
         if product_progress.get("profile_completed"):
             completed.append(CompletedStep.ACCOUNT_PROFILE)

@@ -101,7 +101,7 @@ def get_structured_model(schema) -> ChatVertexAI:
         temperature=0.0,  # CRÍTICO: 0.0 para extracción. No 0.1.
         max_output_tokens=512,  # La extracción es concisa; limitar tokens reduce costo.
     )
-    return base_model.with_structured_output(schema, method="function_calling")
+    return base_model.with_structured_output(schema) # method="function_calling" queda implícito
 
 
 def get_generation_model() -> ChatVertexAI:

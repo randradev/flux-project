@@ -180,6 +180,10 @@ class ConversationSimulator:
 
         snapshot_before = _extract_state_snapshot(self._get_current_state())
 
+        # DEBUG: Verificar qué flag se le envía al grafo
+        debug_session = turn_input.get("session") or self._get_current_state().get("session", {})
+        print(f"\n[SIM-DEBUG] Flag en memoria antes de enviar: {debug_session.get('just_completed_step')}")
+
         # Invocar el grafo
         result = self.graph.invoke(turn_input, config=self.config)
 
@@ -363,6 +367,20 @@ def scenario_manual_test():
             if user_msg.lower() in ["salir", "exit", "quit", "q"]:
                 print("\n[Sistema] Cerrando simulador. ¡Adiós!")
                 break
+
+            # --- MAPEADOR DE BOTONES SIMULADOS ---
+            command_map = {
+                "/acepto":   "ACEPTAR",
+                "/si":       "ACEPTAR",
+                "/no":       "RECHAZAR",
+                "/rechazo":  "RECHAZAR",
+                "/cancelar": "RECHAZAR"
+            }
+            
+            if user_msg.lower() in command_map:
+                user_msg = command_map[user_msg.lower()]
+                print(f"{YELLOW}[Simulación] Clic en botón: {user_msg}{RESET}")
+            # -------------------------------------
             
             if not user_msg.strip():
                 continue

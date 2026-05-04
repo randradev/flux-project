@@ -207,27 +207,21 @@ SYSTEM_PROMPT_GENERATION_PRE_APPROVED = """
 Eres Flux, el genio amigable de las finanzas en Chile. 
 
 PERSONALIDAD:
-- Eres cercano, usas modismos chilenos ("¡Buena!", "¡Buenazo!", "pucha", "¡bacán!") pero mantienes el profesionalismo.
-- Eres ágil: no das rodeos innecesarios.
-- Tu tono es de celebración y transparencia.
+- Hablas de tú, eres cercano y usas modismos chilenos con moderación.
+- Eres ágil: no das rodeos innecesarios, pero sí eres empático.
+- Si el contexto indica que el crédito se aprobó justo ahora (AVISO), usa frases de celebración y éxito ("¡Lo logramos!", "¡Noticias espectaculares!").
+- Si el contexto no indica un aviso nuevo (RE-PREGUNTA), evita celebrar de nuevo o saludar; asume que el usuario ya conoce su oferta y responde directo a su duda.
 
-TAREA ACTUAL: Presentar la oferta de crédito pre-aprobada al usuario.
+TAREA ACTUAL: Gestión de la oferta de crédito pre-aprobada.
 
-REGLAS DE RESPUESTA:
-1. CELEBRACIÓN (Si es la primera vez): Usa frases de éxito como "¡Tenemos noticias espectaculares!" o "¡Lo logramos, [nombre]!".
-2. FOCO EN LA TARJETA: Debes ser explícito en que los detalles técnicos están en la "Tarjeta de Transparencia" que aparece abajo.
-3. DECISIÓN POR BOTONES: Refuerza que para aceptar o rechazar DEBE usar los botones de la tarjeta. No aceptamos respuestas de texto para formalizar.
-4. NO REPITAS NÚMEROS: No satures el chat repitiendo el monto o la cuota en el texto, ya están visualmente en la tarjeta. Enfócate en el beneficio y el siguiente paso.
-5. BREVEDAD: Máximo 3 oraciones. Queremos que el usuario vea la tarjeta, no que lea un testamento.
+RESTRICCIONES:
+- Máximo 3 oraciones en tu respuesta.
+- No repitas los números técnicos en el texto (ya están en la tarjeta).
+- Refuerza SIEMPRE que la decisión (Aceptar/Rechazar) se toma exclusivamente con los botones de la tarjeta de transparencia. No aceptamos texto para formalizar.
 
-MANEJO DE DUDAS (Si el usuario pregunta algo en lugar de decidir):
-- Responde con mucha gracia: "¡Te escucho! Pero para asegurar estas condiciones, necesito que me confirmes tu decisión en la tarjetita de abajo".
-- No dejes que el usuario se pierda en la conversación; redirígelo siempre a la decisión final.
-
-RESTRICCIÓN CRÍTICA:
-- NUNCA digas que "el sistema" aprobó. Eres TÚ (Flux) quien le trae la buena nueva.
+MANEJO DE DUDAS:
+- Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe usar los botones de la tarjeta de abajo para que la aceptación sea oficial.
 """
-
 
 # ======================================================================================================
 # NODOS DEL FLUJO DE CREDITO DE CONSUMO
@@ -705,7 +699,7 @@ def loan_risk_engine_node(state: FluxState) -> dict:
     session    = state.get("session", {})
     prep       = state.get("preparation_data", {})
     collecting = state.get("collecting_data", {})
-    
+    evaluation_results = state.get("evaluation_results", {})
     loan_profile = collecting.get("loan_profile", {})
     loan_sim     = collecting.get("loan_sim", {})
 
@@ -759,11 +753,41 @@ def loan_risk_engine_node(state: FluxState) -> dict:
             engine_status=engine_status,
         )
 
+    # 4. ------ SELECCIÓN DE FLAG DE SALIDA ------
+    status = engine_result.get("status_proceso")
+    if status == "PRE_APPROVED":
+        completion_flag = CompletedStep.LOAN_RISK_SUCCESS
+        # Actualizar Progreso Histórico (Persistencia para ruteo P1)
+        current_progress = session.get("progress", {})
+        loan_progress = current_progress.get("loan", {})
+        session["progress"] = {
+            **current_progress,
+            "loan": {**loan_progress, "risk_engine_completed": True}
+        }
+    else:
+        # Cubre REJECTED y ERROR
+        completion_flag = CompletedStep.LOAN_RISK_REJECTED
+
     return {
         "evaluation_results": {
-            "loan_engine": engine_result,
+            **evaluation_results,
+            "loan_engine": engine_result
         },
-        "session": {**session, "current_node": "LOAN_RISK_ENGINE"},
+        "session": {
+            **session,
+            "just_completed_step": completion_flag,
+        }
+    }
+
+    return {
+        "evaluation_results": {
+            **evaluation_results,
+            "loan_engine": engine_result
+        },
+        "session": {
+            **session,
+            "just_completed_step": CompletedStep.LOAN_RISK_ENGINE,
+        }
     }
 
 # ======================================================================================================
@@ -796,34 +820,18 @@ def loan_pre_approved_node(state: FluxState) -> dict:
                      y escribir offer_data["loan"]["pre_approval_status"] = "ACCEPTED".
       - Si REJECTED: setear just_completed_step = LOAN_CLOSED_BY_USER.
     """
-    # REFINAR ESTA LÓGICA
-    # 2. Construir los datos para la interfaz de la Tarjeta de Transparencia.
-
-    # 3. Mostrar la tarjeta de transparencia y un mensaje felicitando y dando instrucciones para continuar (solo aceptación por botones)
-
-    # 4. ------ Verificar si venimos de un clic en botón (Payload de la interfaz) ------
-    # Asumimos que tu API/Router traduce el clic en una flag o mensaje específico
-    # Ejemplo: si el usuario hizo clic en 'ACEPTAR', el sistema inyecta la señal.
-
-    # 4. ------ Lógica de Decisión (SOLO POR BOTÓN) ------
-    # 4.A. Usuario Acepta la Oferta (retorno silencioso y pasar al destino)
-    # 4.B. Usuario Rechaza la Oferta (retorno silencioso y pasar al destino)
-
-    # 4.C. Usuario habló pero no apretó ningún botón:
-    # Volver a mostrar la oferta
-    # Generar mensaje indicando que debe presionar un botón (usar helper para _build_offer_message, incluyendo evaluación de just_completed_step y lógica de Llamada Tipo B de Generación ya implementada en otros nodos)
-    # Loop en el mismo nodo para esperar clic en el siguiente turno.
-    
     # 1. ------ Recolectar Datos Iniciales ------
-    session    = state.get("session", {})
+    raw_session = state.get("session", {})
+    just_completed = raw_session.get("just_completed_step")
+    session = {**raw_session, "just_completed_step": None}
+
     prep       = state.get("preparation_data", {})
     messages   = state.get("messages", [])
     nombre     = prep.get("nombre", "")
     first_name = nombre.split()[0] if nombre else "amig@"
 
     # 2. ------ Detección de Salto Intra-turno (Viene de loan_risk_engine) ------
-    just_completed = session.get("just_completed_step")
-    is_intra_turn_jump = (just_completed == CompletedStep.LOAN_RISK_ENGINE)
+    is_intra_turn_jump = (just_completed == CompletedStep.LOAN_RISK_SUCCESS)
     
     # 3. ------ Leer resultados del motor
     engine_result = state.get("evaluation_results", {}).get("loan_engine", {})
@@ -934,10 +942,12 @@ def loan_pre_approved_node(state: FluxState) -> dict:
     # A. Construir contexto usando el helper desacoplado (Paso 3)
     context = _build_pre_approved_generation_context(
         nombre=first_name,
-        is_jump=is_intra_turn_jump,
+        just_completed_step=just_completed,
         engine_result=engine_result,
         last_msg=last_user_msg
     )
+
+    print(f"\n[DEBUG-LOGIC] just_completed: {just_completed}")
 
     # B. Llamada al LLM usando el prompt constante (Paso 4)
     flux_response = _flux_generator.invoke([
@@ -984,27 +994,10 @@ def loan_pre_approved_node(state: FluxState) -> dict:
         }
     }
 
+    # MARTILLAZO DE LIMPIEZA FINAL:
+    output["session"]["just_completed_step"] = None 
+
     return output
-
-    '''
-    from langchain_core.messages import AIMessage
-    return {
-        "session": {
-            **session,
-            "current_node":      "LOAN_PRE_APPROVED",
-            "previous_node":     session.get("current_node"),
-            "just_completed_step": just_completed,
-        },
-        "offer_data": {
-            "loan": {
-                "pre_approval_status": "ACCEPTED",
-                "timestamp_acceptance": _dt.datetime.utcnow().isoformat(),
-            }
-        },
-        "messages": [AIMessage(content=mensaje_oferta)],
-    }
-    '''
-
 
 # ──────────────────────────────────────────────────────────────────────────────────────
 # LOAN_OTP_VALIDATION — Validación del código enviado por email
@@ -1565,56 +1558,56 @@ def _build_sim_generation_context(
 # ── Construir el contexto para la Llamada B (generador) para nodo LOAN_PRE_APPROVED ──────────────
 def _build_pre_approved_generation_context(
     nombre: str,
-    is_jump: bool,
+    just_completed_step: str,
     engine_result: dict,
     last_msg: str = ""
 ) -> str:
-    """
-    Construye el contexto para que Flux presente la oferta o refuerce la decisión.
     
-    INPUT:
-        nombre        : Nombre del usuario.
-        is_jump       : True si viene directo del motor (celebración).
-        engine_result : Diccionario con los resultados del cálculo.
-        last_msg      : Último mensaje del usuario (si no es salto).
-    """
+    # ── Extracción de datos del motor ──
     monto   = engine_result.get("monto_aprobado", 0)
     cuota   = engine_result.get("cuota_mensual", 0)
     plazo   = engine_result.get("plazo_aprobado", 0)
     cae     = engine_result.get("cae", 0.0)
     ctc     = engine_result.get("ctc", 0)
 
-    # ── Instrucción de Tono según el camino ──
-    if is_jump:
-        instruccion_flujo = (
-            "ES LA PRIMERA VEZ QUE EL USUARIO VE LA OFERTA. "
-            "Celebra el éxito, sé muy positivo y dile que ya tiene su oferta lista "
-            "en la tarjeta de abajo. Invítalo a revisar los detalles y aceptar."
+    # 1. ── AVISO DE TRANSICIÓN (Igual que en SIM) ──
+    # Este bloque solo existe en el momento del "salto"
+    transicion_msg = ""
+    if just_completed_step == CompletedStep.LOAN_RISK_SUCCESS:
+        transicion_msg = (
+            "AVISO: El crédito acaba de ser aprobado exitosamente. "
+            "Esta es la primera vez que el usuario ve la oferta: ¡CELEBRA EL ÉXITO!"
+        )
+
+    # 2. ── INSTRUCCIÓN DE COMPORTAMIENTO (El "Else" lógico) ──
+    # Esta instrucción siempre está, pero su foco cambia según el contexto
+    if not transicion_msg and last_msg:
+        # Este es el caso de "Turno 4" (Re-pregunta)
+        comportamiento = (
+            f"RE-PREGUNTA: El usuario ya tiene su oferta y ahora comenta: '{last_msg}'. "
+            "NO celebres de nuevo. Responde su duda brevemente y dile que para avanzar "
+            "DEBE usar los botones de la tarjeta de transparencia. Sé firme pero amable."
         )
     else:
-        instruccion_flujo = (
-            f"EL USUARIO YA TENÍA LA OFERTA Y DIJO: '{last_msg}'. "
-            "Reconoce su comentario brevemente, pero explícale con mucha gracia que "
-            "para avanzar debe usar los botones de la tarjeta de transparencia. "
-            "Recuérdale que las condiciones son súper buenas pero requieren su confirmación formal."
+        # Este es el caso de "Turno 3" (Celebración)
+        comportamiento = (
+            "PRESENTACIÓN: Invita al usuario a revisar los detalles en la tarjeta de "
+            "transparencia y a decidir usando los botones."
         )
 
     context = f"""
+    {transicion_msg}
+
     --- CONTEXTO DE LA OFERTA ---
     Usuario: {nombre}
-    Monto Aprobado: ${monto:,} CLP
-    Cuota Mensual: ${cuota:,} CLP
-    Plazo: {plazo} meses
-    CAE: {cae:.2%}
-    Costo Total (CTC): ${ctc:,} CLP
+    Monto: ${monto:,} | Cuota: ${cuota:,} | Plazo: {plazo} meses
+    CAE: {cae:.2%} | CTC: ${ctc:,}
 
-    --- INSTRUCCIÓN DE FLUJO ---
-    {instruccion_flujo}
-
-    REGLA DE ORO: No repitas todos los números en el texto (ya están en la tarjeta), 
-    enfócate en la emoción y en la instrucción de usar los botones.
+    --- INSTRUCCIÓN ACTUAL ---
+    {comportamiento}
     """
     return context
+
 
 
 # ── Gestionar re-preguntas con contexto
