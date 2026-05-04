@@ -46,10 +46,14 @@ KB_RPC         = "match_knowledge_base"
 
 # Parámetros de retrieval
 DEFAULT_TOP_K           = 5     # Fragmentos a recuperar
-SIMILARITY_THRESHOLD    = 0.55  # Umbral mínimo de similitud (coseno)
-FALLBACK_THRESHOLD      = 0.60  # Si el mejor resultado está bajo esto → fallback
+SIMILARITY_THRESHOLD    = 0.30  # Umbral mínimo de similitud (coseno)
+FALLBACK_THRESHOLD      = 0.45  # Si el mejor resultado está bajo esto → fallback
 
 # Singletons de modelos (se instancian una vez al importar el módulo)
+# En consultant.py, antes de la línea 53:
+from app.config import settings
+print(f"DEBUG: Project: {settings.google_cloud_project_id}")
+print(f"DEBUG: Location: {settings.google_cloud_location}")
 _embeddings_model = get_embeddings_model()
 _generation_model = get_generation_model()
 
@@ -88,6 +92,11 @@ CONTEXTO DE SESIÓN DEL USUARIO:
 
 FRAGMENTOS DE REGLAS DE NEGOCIO RECUPERADOS:
 {retrieved_chunks}
+
+RECONOCIMIENTO DE DATOS (UX):
+- Si el usuario acaba de entregar un dato (como su renta, monto o antigüedad) junto a su pregunta, RECONÓCELO brevemente al inicio de tu respuesta."
+- Ejemplo: '¡Anotado lo de tu renta de 2 millones! Respecto a por qué te lo pedimos...'"
+- Esto hace que la conversación se sienta fluida y que el usuario sepa que lo escuchamos.
 
 INSTRUCCIÓN FINAL:
 Responde la pregunta del usuario usando la información de los fragmentos.
@@ -159,17 +168,28 @@ def _build_context_snapshot(state: FluxState) -> str:
 
     prep    = state.get("preparation_data", {})
     collect = state.get("collecting_data", {})
+    eval_results = state.get("evaluation_results", {})
+    transp_data  = state.get("transparency_data", {})
+    auth    = state.get("auth_control", {})
 
-    lines = [f"- Nombre: {nombre}"]
-    lines.append(f"- Nodo actual: {node}")
+    lines = [f"--- CONTEXTO DE SESIÓN ---"]
+    lines.append(f"- Usuario: {nombre}")
+    lines.append(f"- Producto activo: {product}")
+    lines.append(f"- Nodo actual en el grafo: {node}")
 
+    # ───────────────────────────────────────────────────────────
     # ── Datos según producto activo ───────────────────────────
+    # ───────────────────────────────────────────────────────────
 
+    lines.append("\n[DATOS DECLARADOS POR USUARIO]")
+    
+    # ── CRÉDITO ───────────────────────────
     if product == "LOAN":
+
+        # FASE DE RECOLECCIÓN
         profile = collect.get("loan_profile", {})
         sim     = collect.get("loan_sim", {})
         edad    = prep.get("edad")
-
         if edad:
             lines.append(f"- Edad: {edad} años")
         if profile.get("renta"):
@@ -183,7 +203,27 @@ def _build_context_snapshot(state: FluxState) -> str:
         if sim.get("plazo_solicitado"):
             lines.append(f"- Plazo deseado: {sim['plazo_solicitado']} cuotas")
 
+        # RESULTADO DE MOTOR
+        if product == "LOAN" and "loan_engine" in eval_results:
+            res = eval_results["loan_engine"]
+            lines.append("\n[RESULTADOS DEL MOTOR DE RIESGO]")
+            lines.append(f"- Estado del proceso: {res.get('status_proceso', 'PENDIENTE')}")
+            
+            if res.get("status_proceso") == "REJECTED":
+                lines.append(f"- Motivo de rechazo: {res.get('motivo_rechazo', 'Política general')}")
+
+        # DATOS DE TRANSPARENCIA
+        loan_transp = transp_data.get("loan", {})
+        if loan_transp:
+            lines.append("\n[OFERTA VISIBLE EN PANTALLA]")
+            lines.append(f"- Cuota: {loan_transp.get('cuota_mensual')}")
+            lines.append(f"- CAE: {loan_transp.get('cae')}")
+            lines.append(f"- Costo Total (CTC): {loan_transp.get('ctc')}")
+            lines.append(f"- Tasa: {loan_transp.get('tasa_interes_mensual')}")
+
+    # ── CUENTA CORRIENTE ───────────────────────────
     elif product == "ACCOUNT":
+        # FASE DE RECOLECCIÓN
         profile = collect.get("account_profile", {})
         edad    = prep.get("edad")
 
@@ -196,7 +236,28 @@ def _build_context_snapshot(state: FluxState) -> str:
         if profile.get("nivel_estudios") and profile["nivel_estudios"] != "DESCONOCIDO":
             lines.append(f"- Nivel de estudios: {profile['nivel_estudios'].capitalize()}")
 
+        # RESULTADO DE MOTOR (Cuenta Corriente)
+        if "account_engine" in eval_results:
+            res = eval_results["account_engine"]
+            lines.append("\n[RESULTADOS DE EVALUACIÓN]")
+            lines.append(f"- Estado del proceso: {res.get('status_proceso', 'PENDIENTE')}")
+            
+            if res.get("status_proceso") == "REJECTED":
+                lines.append(f"- Motivo de rechazo: {res.get('motivo_rechazo', 'Política comercial')}")
+
+        # DATOS DE TRANSPARENCIA (Lo que el usuario ve de su cuenta)
+        acc_transp = transp_data.get("account", {})
+        if acc_transp:
+            lines.append("\n[OFERTA VISIBLE EN PANTALLA]")
+            lines.append(f"- Categoría de cuenta: {acc_transp.get('final_category')}")
+            lines.append(f"- Línea de crédito: {acc_transp.get('credit_line_amount')}")
+            lines.append(f"- Costo mantención: {acc_transp.get('monthly_cost')}")
+            if acc_transp.get('has_upgrade') == "SÍ":
+                lines.append("- Beneficio aplicado: Upgrade por nivel de estudios")
+
+    # ── DEPÓSITO A PLAZO ───────────────────────────
     elif product == "DAP":
+        # FASE DE RECOLECCIÓN
         params = collect.get("dap_params", {})
         edad   = prep.get("edad")
 
@@ -209,17 +270,36 @@ def _build_context_snapshot(state: FluxState) -> str:
         if params.get("moneda"):
             lines.append(f"- Moneda seleccionada: {params['moneda']}")
 
-    else:
-        # Producto GENERAL: solo datos básicos de preparation_data
-        if prep.get("edad"):
-            lines.append(f"- Edad: {prep['edad']} años")
+        # RESULTADO DE MOTOR (DAP)
+        if "dap_engine" in eval_results:
+            res = eval_results["dap_engine"]
+            lines.append("\n[RESULTADOS DE SIMULACIÓN]")
+            lines.append(f"- Estado del proceso: {res.get('status_proceso', 'PENDIENTE')}")
+            
+            if res.get("status_proceso") == "REJECTED":
+                lines.append(f"- Motivo de rechazo: {res.get('motivo_rechazo', 'Condiciones no cumplen')}")
 
-    # Si no se recopiló nada (inicio de flujo), indicarlo explícitamente
-    if len(lines) <= 2:
-        lines.append("- (Sin datos recolectados aún en esta sesión)")
+        # DATOS DE TRANSPARENCIA (Lo que el usuario ve de su inversión)
+        dap_transp = transp_data.get("dap", {})
+        if dap_transp:
+            lines.append("\n[PROYECCIÓN VISIBLE EN PANTALLA]")
+            lines.append(f"- Ganancia estimada: {dap_transp.get('estimated_gain')}")
+            lines.append(f"- Retorno total: {dap_transp.get('total_return')}")
+            lines.append(f"- Tasa del periodo: {dap_transp.get('period_rate')}")
+            if dap_transp.get('ipc_applied') and dap_transp.get('ipc_applied') != "0.0":
+                lines.append(f"- Reajuste IPC aplicado: {dap_transp.get('ipc_applied')}")
 
+    # ── BLOQUE UNIVERSAL DE SEGURIDAD (Se añade a todos) ───────
+    if auth.get("otp_attempts", 0) > 0:
+        lines.append("\n[ESTADO DE SEGURIDAD]")
+        lines.append(f"- Intentos fallidos de OTP: {auth['otp_attempts']}")
+        if auth.get("security_blocked"):
+            lines.append("- ESTADO: BLOQUEADO POR SEGURIDAD")
+
+    # ── CIERRE UNIVERSAL ───────────────────────────────────────
+    if len(lines) <= 5: # O el número de líneas que tenga tu cabecera
+        lines.append("\n(Aún no hay datos registrados en esta sesión)")
     return "\n".join(lines)
-
 
 # ══════════════════════════════════════════════════════════════
 # RETRIEVAL (BÚSQUEDA VECTORIAL)
@@ -258,7 +338,12 @@ def _retrieve_chunks(
             "match_count":        top_k,
             "similarity_threshold": SIMILARITY_THRESHOLD,
             "filter_product":     filter_product,
+        
         }).execute()
+
+        print(f"DEBUG RAG: Se encontraron {len(result.data)} chunks potenciales para el producto {product}")
+        if len(result.data) > 0:
+            print(f"DEBUG RAG: Similitud del mejor chunk: {result.data[0].get('similarity')}")
 
         chunks = result.data or []
 

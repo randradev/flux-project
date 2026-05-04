@@ -17,6 +17,7 @@ from app.modules.credit_eng import CreditEngine, PolicyRejectionError, PaymentCa
 from app.utils.llm_utils import normalize_llm_response
 from app.graph.constants import CompletedStep
 from langchain_core.outputs import LLMResult
+from app.modules.consultant import get_consultant_response
 
 # ======================================================================================================
 # LLM Y PROMPTS
@@ -90,6 +91,7 @@ Si el usuario dice "2 millones", tu razonamiento debe ser: "Monto detectado en l
 
 INSTRUCCIONES:
 1. Clasifica la `intencion` (DATO_FINANCIERO, PREGUNTA, SALUDO, OTRO).
+    - PRIORIDAD ABSOLUTA: Si el usuario hace una pregunta, duda o pide una explicación (¿por qué?, ¿qué tiene que ver?, ¿cómo?), la intención DEBE ser 'PREGUNTA', incluso si también entrega datos.
 2. Usa el campo `razonamiento` para explicar qué datos ves.
 3. REGLAS DE CONVERSIÓN:
    - DINERO: "palo" = 1.000.000 | "luca" = 1.000.
@@ -120,6 +122,7 @@ Eres un motor de extracción de datos financieros. Tu función es analizar el me
 
 INSTRUCCIONES:
 1. Clasifica la `intencion` (DATO_FINANCIERO, PREGUNTA, SALUDO, OTRO).
+    - PRIORIDAD ABSOLUTA: Si hay una consulta, duda o pregunta sobre plazos, montos o límites (ej: "¿hay límite?", "¿puedo pedir más?"), marca 'PREGUNTA' aunque también indique el monto o cuotas.
 2. Usa el campo `razonamiento` para explicar qué datos ves en el mensaje. Si un dato no está, decláralo ahí (ej: "No se menciona monto").
 3. Basándote en ese razonamiento, llena los campos `monto_solicitado` y `plazo_solicitado`. 
 4. REGLA DE ORO: Si el dato no está explícito, el valor DEBE ser 0. 
@@ -362,6 +365,9 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
     first_name = nombre.split()[0] if nombre else "amig@"
     application_id = session.get("application_id")
 
+    extracted = None
+    newly_extracted = {}
+
     # ------ 2. CAPTURA DEL ÚLTIMO MENSAJE DEL USUARIO ------
     last_user_msg = next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)),
@@ -403,7 +409,6 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
     import json
     import re
 
-    # --- INICIO REEMPLAZO EXACTO ---
     match = re.search(r"\{.*\}", content_str, re.DOTALL)
     
     if match:
@@ -425,7 +430,6 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
             razonamiento="No se detectó formato JSON",
             renta=0, antiguedad_laboral=0, nivel_estudios="DESCONOCIDO"
         )
-    # --- FIN REEMPLAZO EXACTO ---
 
     # Ahora los prints son seguros porque 'extracted' nunca será None
     print(f"[DEBUG-PROFILE] LLM razonamiento: {extracted.razonamiento}")
@@ -460,6 +464,18 @@ def loan_collecting_profile_node(state: FluxState) -> dict:
         "collecting_data": {**collecting, "loan_profile": updated_profile},
         "session":         {**session, "current_node": "LOAN_COLLECTING_PROFILE"},
     }
+
+    if last_user_msg and extracted and extracted.intencion == "PREGUNTA":
+        # 1. Preparamos un estado temporal que ya incluya los datos recién extraídos
+        # para que el Consultor los vea en su snapshot.
+        temp_state = {**state, "collecting_data": {**collecting, "loan_profile": updated_profile}}
+        
+        # 2. Obtenemos la respuesta del experto
+        rag_response = get_consultant_response(last_user_msg, temp_state)
+        
+        # 3. Retornamos y esperamos la siguiente interacción del usuario
+        output["messages"] = [AIMessage(content=rag_response)]
+        return output
 
     # 7. ------ DECISIÓN: ¿Avance silencioso o Llamada B? ------
     if not missing:
@@ -538,6 +554,10 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
     current_sim = collecting.get("loan_sim", {})
     first_name  = prep.get("nombre", "").split()[0] if prep.get("nombre") else "amig@"
 
+    newly_extracted = {}
+    updated_sim = {**current_sim}
+    extracted = None
+
     last_user_msg = next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
     )
@@ -577,6 +597,9 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
             print(f"[!!!] No se encontró JSON en SIM.")
             extracted = LoanSimExtraction(intencion="OTRO", razonamiento="Error")
 
+        print(f"[DEBUG-SIM] Intención: {extracted.intencion}")
+        print(f"[DEBUG-SIM] Razonamiento: {extracted.razonamiento}")
+
         # ------ 4. MERGE DEFENSIVO ------
         if extracted.razonamiento != "Error":
             # Definimos qué valores NO son progreso (Centinelas)
@@ -613,6 +636,22 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
             "just_completed_step": None,   # ← Limpieza anticipada (se sobreescribirá si sim completa)
         },
     }
+
+    if last_user_msg and extracted and extracted.intencion == "PREGUNTA":
+        # 1. Preparamos el estado temporal con los datos de simulación (monto/plazo)
+        # que el usuario pudo haber entregado en el mismo mensaje.
+        temp_state = {**state, "collecting_data": {**collecting, "loan_sim": updated_sim}}
+        
+        # 2. Obtenemos la respuesta del Consultor
+        rag_response = get_consultant_response(last_user_msg, temp_state)
+        
+        # 3. Retornamos y detenemos el flujo para esperar al usuario
+        output = {
+            "collecting_data": {**collecting, "loan_sim": updated_sim},
+            "session":         {**session, "current_node": "LOAN_COLLECTING_SIMULATION"},
+            "messages":        [AIMessage(content=rag_response)]
+        }
+        return output
 
     # ── AVANCE SILENCIOSO (simulación completa) ───────────────
     if not missing:
@@ -789,17 +828,6 @@ def loan_risk_engine_node(state: FluxState) -> dict:
             "just_completed_step": CompletedStep.LOAN_RISK_ENGINE,
         }
     }
-
-# ======================================================================================================
-# STUBS — NODOS POST-RISK (v3.0)
-# ======================================================================================================
-# Cada stub cumple el contrato mínimo:
-#   1. Actualizar session["current_node"] con el valor UPPER correspondiente.
-#   2. Limpiar session["just_completed_step"] (flag volátil de turno anterior).
-#   3. Retornar el estado con los campos modificados.
-#
-# La lógica de negocio completa se implementará en sprints posteriores.
-# ======================================================================================================
 
 import datetime as _dt  # Alias para evitar colisión con nombres de variables locales
 
@@ -998,6 +1026,17 @@ def loan_pre_approved_node(state: FluxState) -> dict:
     output["session"]["just_completed_step"] = None 
 
     return output
+
+# ======================================================================================================
+# STUBS (v3.0)
+# ======================================================================================================
+# Cada stub cumple el contrato mínimo:
+#   1. Actualizar session["current_node"] con el valor UPPER correspondiente.
+#   2. Limpiar session["just_completed_step"] (flag volátil de turno anterior).
+#   3. Retornar el estado con los campos modificados.
+#
+# La lógica de negocio completa se implementará en sprints posteriores.
+# ======================================================================================================
 
 # ──────────────────────────────────────────────────────────────────────────────────────
 # LOAN_OTP_VALIDATION — Validación del código enviado por email

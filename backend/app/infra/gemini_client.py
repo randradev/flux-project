@@ -29,52 +29,19 @@ from app.config import settings
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
 os.environ["GOOGLE_CLOUD_PROJECT"] = settings.google_cloud_project_id
 
-
-# ── Inicialización Regional (Embeddings) ─────────────────────
-def _init_regional():
-    """
-    Inicializa Vertex AI apuntando a la región us-central1.
-    Necesario para acceder al modelo de embeddings.
-    """
-    vertexai.init(
-        project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,
-    )
-
-
-# ── Inicialización Global (Chat / Extracción) ────────────────
-def _init_global():
-    """
-    Inicializa Vertex AI con el endpoint global de aiplatform.
-    El modelo gemini-3-flash-preview requiere este endpoint específico.
-    """
-    vertexai.init(
-        project=settings.google_cloud_project_id,
-        location="us-central1",
-        api_endpoint="aiplatform.googleapis.com"
-    )
-
-
-
 # ── Modelos ───────────────────────────────────────────────────
 
 def get_chat_model() -> ChatVertexAI:
     """
     Retorna el modelo de chat para los nodos conversacionales del grafo.
-
-    INPUT:  Ninguno.
-    PROCESO: Inicializa el brazo global y retorna ChatVertexAI con el modelo flash.
-    OUTPUT: Instancia de ChatVertexAI lista para invocación.
-
-    Uso en nodos: `model = get_chat_model(); response = model.invoke(messages)`
+    Usa configuración explícita para evitar conflictos con el RAG.
     """
-    _init_global()
     return ChatVertexAI(
         model_name="gemini-3-flash-preview",
         project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,  # Restauramos la referencia lógica
-        api_endpoint="aiplatform.googleapis.com", # <--- OBLIGATORIO para evitar el 404
-        temperature=0.3,   # Baja para respuestas más deterministas en extracción
+        location="us-central1",
+        api_endpoint="aiplatform.googleapis.com", # <--- OBLIGATORIO
+        temperature=0.3,
         max_output_tokens=2048,
     )
 
@@ -82,65 +49,35 @@ def get_chat_model() -> ChatVertexAI:
 def get_structured_model(schema) -> ChatVertexAI:
     """
     Llamada A — Extractor de entidades financieras.
-    
-    Configuración optimizada para extracción de máxima fidelidad:
-      - temperature=0.0: Sin variabilidad. El modelo reporta lo que vio, no infiere.
-      - method="function_calling": Enforza null para campos Optional no mencionados.
-        A diferencia de json_mode (que genera JSON libre y puede alunar centinelas),
-        function_calling hace que el SDK valide el output contra el schema Pydantic.
-    
-    USO: Invocado una vez por turno en los nodos COLLECTING.
-         Solo extrae. No genera texto conversacional.
+    Usa el endpoint global de forma explícita para evitar conflictos con embeddings.
     """
-    _init_global()
-    base_model = ChatVertexAI(
-        model_name="gemini-3-flash-preview",
-        project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,
-        api_endpoint="aiplatform.googleapis.com",
-        temperature=0.0,  # CRÍTICO: 0.0 para extracción. No 0.1.
-        max_output_tokens=512,  # La extracción es concisa; limitar tokens reduce costo.
-    )
-    return base_model.with_structured_output(schema) # method="function_calling" queda implícito
-
-
-def get_generation_model() -> ChatVertexAI:
-    """
-    Llamada B — Generador de respuestas conversacionales de Flux.
-    
-    Configuración optimizada para generación con personalidad:
-      - temperature=0.7: Permite variabilidad natural en las respuestas.
-        Flux no debe sonar robótico ni repetitivo entre sesiones.
-      - Sin structured_output: Genera texto libre.
-    
-    USO: Invocado UNA VEZ por turno, después del extractor, solo cuando
-         el nodo necesita emitir un mensaje al usuario (re-pregunta o
-         respuesta a intención no-financiera).
-         No se invoca en avance silencioso.
-    """
-    _init_global()
     return ChatVertexAI(
         model_name="gemini-3-flash-preview",
         project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,
-        api_endpoint="aiplatform.googleapis.com",
-        temperature=0.7,
-        max_output_tokens=1024,
-    )
+        location="us-central1",
+        api_endpoint="aiplatform.googleapis.com", # <--- Forzamos el endpoint correcto aquí
+        temperature=0,
+    ).with_structured_output(schema)
 
+def get_generation_model() -> ChatVertexAI:
+    """
+    Llamada B — Generador de respuestas naturales (Persona Flux).
+    """
+    return ChatVertexAI(
+        model_name="gemini-3-flash-preview",
+        project=settings.google_cloud_project_id,
+        location="us-central1",
+        api_endpoint="aiplatform.googleapis.com", # <--- Forzamos el endpoint correcto aquí
+        temperature=0.2,
+        max_output_tokens=2048,
+    )
 
 def get_embeddings_model() -> VertexAIEmbeddings:
     """
-    Retorna el modelo de embeddings para el sistema RAG.
-
-    INPUT:  Ninguno.
-    PROCESO: Inicializa el brazo regional y retorna VertexAIEmbeddings.
-    OUTPUT: Instancia de VertexAIEmbeddings lista para generar vectores.
+    Retorna el modelo de embeddings para el sistema RAG de forma aislada.
     """
-    _init_regional()
-
+    # Mantenemos tu hack de SafetySettingsType por compatibilidad de versiones
     from langchain_google_vertexai import embeddings as v_embeddings
-
     if not hasattr(v_embeddings, "SafetySettingsType"):
         from typing import Any
         setattr(v_embeddings, "SafetySettingsType", Any)
@@ -153,5 +90,5 @@ def get_embeddings_model() -> VertexAIEmbeddings:
     return VertexAIEmbeddings(
         model_name="text-embedding-004",
         project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,
+        location=settings.google_cloud_location, # <--- Usará el endpoint regional por defecto
     )
