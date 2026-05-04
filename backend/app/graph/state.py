@@ -322,6 +322,49 @@ class AuthControl(TypedDict, total=False):
     error_detail: str | None     # Descripción técnica para logging
 
 # ══════════════════════════════════════════════════════════════
+# NAMESPACE J: transparency_data  [NUEVO en v2.1]
+# Datos curados para la "Tarjeta de Transparencia" de cada producto.
+# Escritura: Nodos PRE_APPROVED de cada producto.
+# ══════════════════════════════════════════════════════════════
+
+class LoanTransparency(TypedDict, total=False):
+    """Atributos de visualización para Crédito de Consumo."""
+    monto_aprobado: str
+    plazo_aprobado: str
+    tasa_interes_mensual: str
+    cuota_mensual: str
+    ctc: str
+    total_intereses: str
+    cae: str
+    nivel_riesgo: str
+
+class AccountTransparency(TypedDict, total=False):
+    """Atributos de visualización para Cuenta Corriente."""
+    final_category: str
+    has_upgrade: str
+    credit_line_amount: str
+    monthly_cost: str
+
+class DapTransparency(TypedDict, total=False):
+    """Atributos de visualización para Depósito a Plazo."""
+    monto: str
+    moneda: str
+    estimated_gain: str
+    total_return: str
+    period_rate: str
+    conversion_rate_used: str
+    ipc_applied: str
+
+class TransparencyData(TypedDict, total=False):
+    """
+    Contenedor raíz para la visualización intermedia de ofertas.
+    """
+    loan: LoanTransparency
+    account: AccountTransparency
+    dap: DapTransparency
+
+
+# ══════════════════════════════════════════════════════════════
 # RAÍZ: FluxState
 # ══════════════════════════════════════════════════════════════
 
@@ -375,6 +418,9 @@ class FluxState(TypedDict):
 
     # ── Control de Autenticación y Seguridad ──────────────────────
     auth_control: AuthControl
+
+    # ── Datos para Tarjeta de Transparencia ───────────────────────
+    transparency_data: TransparencyData
 
     # ── Resultado final del flujo (solo usado al terminar) ─────────
     flow_result: FlowResult

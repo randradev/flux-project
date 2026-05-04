@@ -203,6 +203,32 @@ MANEJO DE ERRORES Y AMBIGÜEDAD (CRÍTICO):
 Si el usuario se ve frustrado o escribe en mayúsculas, mantén la calma, dale la razón ("¡Toda la razón, me traspapelé!") y pide el dato de la forma más sencilla posible.
 """
 
+SYSTEM_PROMPT_GENERATION_PRE_APPROVED = """
+Eres Flux, el genio amigable de las finanzas en Chile. 
+
+PERSONALIDAD:
+- Eres cercano, usas modismos chilenos ("¡Buena!", "¡Buenazo!", "pucha", "¡bacán!") pero mantienes el profesionalismo.
+- Eres ágil: no das rodeos innecesarios.
+- Tu tono es de celebración y transparencia.
+
+TAREA ACTUAL: Presentar la oferta de crédito pre-aprobada al usuario.
+
+REGLAS DE RESPUESTA:
+1. CELEBRACIÓN (Si es la primera vez): Usa frases de éxito como "¡Tenemos noticias espectaculares!" o "¡Lo logramos, [nombre]!".
+2. FOCO EN LA TARJETA: Debes ser explícito en que los detalles técnicos están en la "Tarjeta de Transparencia" que aparece abajo.
+3. DECISIÓN POR BOTONES: Refuerza que para aceptar o rechazar DEBE usar los botones de la tarjeta. No aceptamos respuestas de texto para formalizar.
+4. NO REPITAS NÚMEROS: No satures el chat repitiendo el monto o la cuota en el texto, ya están visualmente en la tarjeta. Enfócate en el beneficio y el siguiente paso.
+5. BREVEDAD: Máximo 3 oraciones. Queremos que el usuario vea la tarjeta, no que lea un testamento.
+
+MANEJO DE DUDAS (Si el usuario pregunta algo en lugar de decidir):
+- Responde con mucha gracia: "¡Te escucho! Pero para asegurar estas condiciones, necesito que me confirmes tu decisión en la tarjetita de abajo".
+- No dejes que el usuario se pierda en la conversación; redirígelo siempre a la decisión final.
+
+RESTRICCIÓN CRÍTICA:
+- NUNCA digas que "el sistema" aprobó. Eres TÚ (Flux) quien le trae la buena nueva.
+"""
+
+
 # ======================================================================================================
 # NODOS DEL FLUJO DE CREDITO DE CONSUMO
 # ======================================================================================================
@@ -596,6 +622,15 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
 
     # ── AVANCE SILENCIOSO (simulación completa) ───────────────
     if not missing:
+        application_id = session.get("application_id")
+        if application_id:
+            update_application_semaphores(
+                application_id=application_id,
+                current_node_id="LOAN_COLLECTING_SIMULATION",
+                node_status="SUCCESS",
+                engine_status="PENDING", # Sigue PENDING porque aún no corre el motor
+            )
+
         current_progress = session.get("progress", {})
         loan_progress = current_progress.get("loan", {})
         output["session"] = {
@@ -605,7 +640,6 @@ def loan_collecting_sim_node(state: FluxState) -> dict:
                 "loan": {**loan_progress, "simulation_completed": True},
             },
             "just_completed_step": CompletedStep.LOAN_SIMULATION,
-            # La arista condicional saltará a loan_risk_engine
         }
         return output
 
@@ -762,35 +796,197 @@ def loan_pre_approved_node(state: FluxState) -> dict:
                      y escribir offer_data["loan"]["pre_approval_status"] = "ACCEPTED".
       - Si REJECTED: setear just_completed_step = LOAN_CLOSED_BY_USER.
     """
-    session = state.get("session", {})
-    nombre  = state.get("preparation_data", {}).get("nombre", "")
+    # REFINAR ESTA LÓGICA
+    # 2. Construir los datos para la interfaz de la Tarjeta de Transparencia.
 
-    # Leer resultado del motor para construir el mensaje (stub: sin cálculo real)
+    # 3. Mostrar la tarjeta de transparencia y un mensaje felicitando y dando instrucciones para continuar (solo aceptación por botones)
+
+    # 4. ------ Verificar si venimos de un clic en botón (Payload de la interfaz) ------
+    # Asumimos que tu API/Router traduce el clic en una flag o mensaje específico
+    # Ejemplo: si el usuario hizo clic en 'ACEPTAR', el sistema inyecta la señal.
+
+    # 4. ------ Lógica de Decisión (SOLO POR BOTÓN) ------
+    # 4.A. Usuario Acepta la Oferta (retorno silencioso y pasar al destino)
+    # 4.B. Usuario Rechaza la Oferta (retorno silencioso y pasar al destino)
+
+    # 4.C. Usuario habló pero no apretó ningún botón:
+    # Volver a mostrar la oferta
+    # Generar mensaje indicando que debe presionar un botón (usar helper para _build_offer_message, incluyendo evaluación de just_completed_step y lógica de Llamada Tipo B de Generación ya implementada en otros nodos)
+    # Loop en el mismo nodo para esperar clic en el siguiente turno.
+    
+    # 1. ------ Recolectar Datos Iniciales ------
+    session    = state.get("session", {})
+    prep       = state.get("preparation_data", {})
+    messages   = state.get("messages", [])
+    nombre     = prep.get("nombre", "")
+    first_name = nombre.split()[0] if nombre else "amig@"
+
+    # 2. ------ Detección de Salto Intra-turno (Viene de loan_risk_engine) ------
+    just_completed = session.get("just_completed_step")
+    is_intra_turn_jump = (just_completed == CompletedStep.LOAN_RISK_ENGINE)
+    
+    # 3. ------ Leer resultados del motor
     engine_result = state.get("evaluation_results", {}).get("loan_engine", {})
-    monto    = engine_result.get("monto_aprobado", 0)
-    cuota    = engine_result.get("cuota_mensual", 0)
-    plazo    = engine_result.get("plazo_aprobado", 0)
-    cae      = engine_result.get("cae", 0.0)
-    ctc      = engine_result.get("ctc", 0)
+    
+    # Datos para cálculos y visualización
+    monto   = engine_result.get("monto_aprobado", 0)
+    cuota   = engine_result.get("cuota_mensual", 0)
+    plazo   = engine_result.get("plazo_aprobado", 0)
+    cae     = engine_result.get("cae", 0.0)
+    ctc     = engine_result.get("ctc", 0)
+    tasa    = engine_result.get("tasa_interes_mensual", 0.0)
+    riesgo  = engine_result.get("nivel_riesgo", "Bajo")
+    interes = engine_result.get("total_intereses", 0)
 
-    mensaje_oferta = (
-        f"🎉 ¡{nombre}, tu crédito fue pre-aprobado!\n\n"
-        f"**Resumen de tu oferta:**\n"
-        f"- Monto aprobado: ${monto:,} CLP\n"
-        f"- Cuota mensual: ${cuota:,} CLP\n"
-        f"- Plazo: {plazo} meses\n"
-        f"- CAE: {cae:.2%}\n"
-        f"- Costo Total del Crédito: ${ctc:,} CLP\n\n"
-        "¿Aceptas esta oferta? Responde **Aceptar** o **Rechazar**."
+
+    # 4. ------ LLAMADA A: PROCESAMIENTO DE DECISIÓN ------
+    user_decision = "PENDING"  # Por defecto
+    last_user_msg = ""
+
+    if not is_intra_turn_jump:
+        # Capturamos el último mensaje del usuario
+        last_user_msg = next(
+            (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), 
+            ""
+        ).strip().upper()
+
+        # Lógica de detección (puede robustecerse con el Extractor si se desea, 
+        # pero para botones/comandos simples basta con keywords)
+        if last_user_msg in ["ACEPTAR", "ACEPTO", "SI", "ACEPTA"]:
+            user_decision = "ACCEPTED"
+        elif last_user_msg in ["RECHAZAR", "RECHAZO", "NO", "RECHAZA"]:
+            user_decision = "REJECTED"
+        else:
+            # El usuario dijo algo que no es una decisión clara
+            user_decision = "PENDING"
+
+
+    # 5. ------ EVALUACIÓN DE ESTADO DE OFERTA (Paso 2.4) ------
+    application_id = session.get("application_id")
+
+    # Inicializamos el output base con los metadatos de sesión
+    output = {
+        "session": {
+            **session,
+            "current_node": "LOAN_PRE_APPROVED",
+            "just_completed_step": None, # Limpieza por defecto
+        }
+    }
+    
+    if user_decision == "ACCEPTED":
+        # A. Actualizar Progreso Histórico
+        current_progress = session.get("progress", {})
+        loan_progress = current_progress.get("loan", {})
+        updated_progress = {
+            **current_progress,
+            "loan": {**loan_progress, "pre_approval_accepted": True},
+        }
+
+        # B. Actualizar Semáforo en DB
+        if application_id:
+            update_application_semaphores(
+                application_id=application_id,
+                current_node_id="LOAN_PRE_APPROVED",
+                node_status="SUCCESS",
+                engine_status="SUCCESS",
+            )
+
+        # C. Output de Éxito con "Foto" congelada de la oferta
+        output["session"] = {
+            **output["session"],
+            "progress": updated_progress,
+            "just_completed_step": CompletedStep.LOAN_PRE_APPROVED
+        }
+        
+        # Guardamos la data exacta que el usuario aceptó
+        output["offer_data"] = {
+            "loan": {
+                "pre_approval_status": "ACCEPTED",
+                "timestamp_acceptance": _dt.datetime.utcnow().isoformat(),
+                "monto_aprobado":       monto,
+                "plazo_aprobado":       plazo,
+                "cuota_mensual":        cuota,
+                "cae":                  cae,
+                "ctc":                  ctc,
+                "tasa_interes_mensual": tasa,
+            }
+        }
+        return output
+
+    elif user_decision == "REJECTED":
+        # Al rechazar, también informamos al semáforo (pero con estado final o similar)
+        if application_id:
+            update_application_semaphores(
+                application_id=application_id,
+                current_node_id="LOAN_PRE_APPROVED",
+                node_status="SUCCESS",
+                engine_status="SUCCESS", # El motor ya hizo su parte
+            )
+        output["session"]["just_completed_step"] = CompletedStep.LOAN_CLOSED_BY_USER
+        return output
+
+    # Si estamos en PENDING (mostrando la tarjeta por primera vez o re-preguntando), 
+    # opcionalmente puedes actualizar el semáforo para decir que el nodo está "IN_PROGRESS"
+
+    # 6. ------ LLAMADA B: GENERACIÓN (Paso 2.5) ------
+    # Si llegamos aquí, user_decision es "PENDING"
+    
+    # A. Construir contexto usando el helper desacoplado (Paso 3)
+    context = _build_pre_approved_generation_context(
+        nombre=first_name,
+        is_jump=is_intra_turn_jump,
+        engine_result=engine_result,
+        last_msg=last_user_msg
     )
 
-    # STUB: Simula aceptación automática para pruebas de ruteo.
-    # En producción, este nodo debe esperar el turno del usuario y
-    # evaluar su respuesta antes de setear just_completed_step.
-    # ─── REEMPLAZAR por lógica real en Sprint correspondiente ───
-    just_completed = CompletedStep.LOAN_PRE_APPROVED  # stub: siempre acepta
-    # ────────────────────────────────────────────────────────────
+    # B. Llamada al LLM usando el prompt constante (Paso 4)
+    flux_response = _flux_generator.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_GENERATION_PRE_APPROVED},
+        {"role": "user",   "content": context},
+    ])
 
+    clean_content = normalize_llm_response(flux_response.content)
+
+    # C. Preparar data para la Tarjeta de Transparencia (Namespace J)
+    # Formateamos los datos para que la UI los muestre bonitos
+    transparency_card = {
+        "loan": {
+            "monto_aprobado":       f"${monto:,} CLP",
+            "plazo_aprobado":       f"{plazo} meses",
+            "tasa_interes_mensual": f"{tasa:.2%}",
+            "cuota_mensual":        f"${cuota:,} CLP",
+            "ctc":                 f"${ctc:,} CLP",
+            "total_intereses":      f"${interes:,} CLP",
+            "cae":                 f"{cae:.2%}",
+            "nivel_riesgo":         riesgo
+        }
+    }
+
+    # 7. ------ SALIDA CONSISTENTE (Paso 2.6) ------
+    
+    # Preparamos el mensaje de Flux
+    output["messages"] = [AIMessage(content=clean_content)]
+    
+    # Sincronizamos el Namespace J (Transparency)
+    # Importante: Mantenemos la estructura de segmentación por producto
+    current_transparency = state.get("transparency_data", {})
+    output["transparency_data"] = {
+        **current_transparency,
+        "loan": transparency_card["loan"] 
+    }
+    
+    # Actualizamos metadatos de visualización en la sesión
+    output["session"] = {
+        **output["session"],
+        "display_control": {
+            "active_component": "LOAN_TRANSPARENCY_CARD",
+            "show_full_details": True
+        }
+    }
+
+    return output
+
+    '''
     from langchain_core.messages import AIMessage
     return {
         "session": {
@@ -807,6 +1003,7 @@ def loan_pre_approved_node(state: FluxState) -> dict:
         },
         "messages": [AIMessage(content=mensaje_oferta)],
     }
+    '''
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────
@@ -1362,6 +1559,60 @@ def _build_sim_generation_context(
     3. Pide solo el primer dato de la lista 'DATOS QUE FALTAN'.
     4. Si la intención es SALUDO u OTRO, responde con empatía y redirige amablemente a pedir el primer dato faltante.
     5. Si la intención es PREGUNTA, reconoce la duda brevemente y redirige al proceso.
+    """
+    return context
+
+# ── Construir el contexto para la Llamada B (generador) para nodo LOAN_PRE_APPROVED ──────────────
+def _build_pre_approved_generation_context(
+    nombre: str,
+    is_jump: bool,
+    engine_result: dict,
+    last_msg: str = ""
+) -> str:
+    """
+    Construye el contexto para que Flux presente la oferta o refuerce la decisión.
+    
+    INPUT:
+        nombre        : Nombre del usuario.
+        is_jump       : True si viene directo del motor (celebración).
+        engine_result : Diccionario con los resultados del cálculo.
+        last_msg      : Último mensaje del usuario (si no es salto).
+    """
+    monto   = engine_result.get("monto_aprobado", 0)
+    cuota   = engine_result.get("cuota_mensual", 0)
+    plazo   = engine_result.get("plazo_aprobado", 0)
+    cae     = engine_result.get("cae", 0.0)
+    ctc     = engine_result.get("ctc", 0)
+
+    # ── Instrucción de Tono según el camino ──
+    if is_jump:
+        instruccion_flujo = (
+            "ES LA PRIMERA VEZ QUE EL USUARIO VE LA OFERTA. "
+            "Celebra el éxito, sé muy positivo y dile que ya tiene su oferta lista "
+            "en la tarjeta de abajo. Invítalo a revisar los detalles y aceptar."
+        )
+    else:
+        instruccion_flujo = (
+            f"EL USUARIO YA TENÍA LA OFERTA Y DIJO: '{last_msg}'. "
+            "Reconoce su comentario brevemente, pero explícale con mucha gracia que "
+            "para avanzar debe usar los botones de la tarjeta de transparencia. "
+            "Recuérdale que las condiciones son súper buenas pero requieren su confirmación formal."
+        )
+
+    context = f"""
+    --- CONTEXTO DE LA OFERTA ---
+    Usuario: {nombre}
+    Monto Aprobado: ${monto:,} CLP
+    Cuota Mensual: ${cuota:,} CLP
+    Plazo: {plazo} meses
+    CAE: {cae:.2%}
+    Costo Total (CTC): ${ctc:,} CLP
+
+    --- INSTRUCCIÓN DE FLUJO ---
+    {instruccion_flujo}
+
+    REGLA DE ORO: No repitas todos los números en el texto (ya están en la tarjeta), 
+    enfócate en la emoción y en la instrucción de usar los botones.
     """
     return context
 
