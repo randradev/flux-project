@@ -138,6 +138,18 @@ def get_embeddings_model() -> VertexAIEmbeddings:
     OUTPUT: Instancia de VertexAIEmbeddings lista para generar vectores.
     """
     _init_regional()
+
+    from langchain_google_vertexai import embeddings as v_embeddings
+
+    if not hasattr(v_embeddings, "SafetySettingsType"):
+        from typing import Any
+        setattr(v_embeddings, "SafetySettingsType", Any)
+    
+    try:
+        VertexAIEmbeddings.model_rebuild()
+    except Exception:
+        pass
+
     return VertexAIEmbeddings(
         model_name="text-embedding-004",
         project=settings.google_cloud_project_id,
