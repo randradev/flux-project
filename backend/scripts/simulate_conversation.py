@@ -260,10 +260,10 @@ class ConversationSimulator:
 
 MOCK_USER = {
     "user_id": "test-user-001",
-    "full_name": "Juan Pérez López",
-    "email": "juan.perez@test.cl",
-    "rut": "12345678-9",
-    "birth_date": "1990-05-15",
+    "full_name": "Ricardo Andrade Valderrama",
+    "email": "randradev.dev@gmail.com",
+    "rut": "19054114-2",
+    "birth_date": "1995-03-03",
     "user_status": "ACTIVE",
     "user_category": None,
 }
