@@ -156,3 +156,7 @@ class LoanSimExtraction(BaseModel):
             return None
         return v
     '''
+
+class LoanDecisionExtraction(BaseModel):
+    decision: str = Field(description="ACCEPTED, REJECTED, PREGUNTA, u OTRO")
+    razonamiento: str = Field(description="Breve explicación de la elección")

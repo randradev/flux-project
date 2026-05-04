@@ -11,13 +11,14 @@ Ruta del grafo: loan_init → loan_risk_engine → END
 from langchain_core.messages import AIMessage, HumanMessage
 from app.infra.gemini_client import get_structured_model, get_generation_model
 from app.graph.state import FluxState
-from app.graph.nodes.schemas.loan_schemas import LoanProfileExtraction, LoanSimExtraction
+from app.graph.nodes.schemas.loan_schemas import LoanProfileExtraction, LoanSimExtraction, LoanDecisionExtraction
 from app.infra.supabase import update_application_semaphores
 from app.modules.credit_eng import CreditEngine, PolicyRejectionError, PaymentCapacityError
 from app.utils.llm_utils import normalize_llm_response
 from app.graph.constants import CompletedStep
 from langchain_core.outputs import LLMResult
 from app.modules.consultant import get_consultant_response
+
 
 # ======================================================================================================
 # LLM Y PROMPTS
@@ -204,6 +205,33 @@ MANEJO DE ERRORES Y AMBIGÜEDAD (CRÍTICO):
     * "¡Te escuché clarito!, pero me perdí en la parte de [campo], ¿me lo repites?"
 
 Si el usuario se ve frustrado o escribe en mayúsculas, mantén la calma, dale la razón ("¡Toda la razón, me traspapelé!") y pide el dato de la forma más sencilla posible.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPTS EN NODO PRE_APPROVED ─────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT_EXTRACTION_DECISION = """
+Eres un motor de extracción de datos. Tu ÚNICA misión es analizar el mensaje del usuario y retornar un JSON estructurado VÁLIDO.
+
+REGLAS DE FORMATO:
+- NO uses bloques de código Markdown (prohibido usar ```json).
+- Retorna estrictamente un objeto JSON con los campos 'decision' y 'razonamiento'.
+
+INTENCIONES POSIBLES ('decision'):
+- ACCEPTED: El usuario acepta o quiere avanzar.
+- REJECTED: El usuario rechaza o quiere cancelar.
+- PREGUNTA: El usuario tiene una duda técnica (CAE, seguros, cuotas, etc).
+- OTRO: Saludos o irrelevante.
+
+REGLA DE ORO: Si hay una PREGUNTA, la decisión DEBE ser 'PREGUNTA', aunque también parezca aceptar.
+
+EJEMPLO:
+Usuario: "Bacán, pero ¿qué es el CAE?"
+-> {
+    "decision": "PREGUNTA",
+    "razonamiento": "Usuario acepta pero pregunta por el CAE."
+}
 """
 
 SYSTEM_PROMPT_GENERATION_PRE_APPROVED = """
@@ -874,31 +902,7 @@ def loan_pre_approved_node(state: FluxState) -> dict:
     riesgo  = engine_result.get("nivel_riesgo", "Bajo")
     interes = engine_result.get("total_intereses", 0)
 
-
-    # 4. ------ LLAMADA A: PROCESAMIENTO DE DECISIÓN ------
-    user_decision = "PENDING"  # Por defecto
-    last_user_msg = ""
-
-    if not is_intra_turn_jump:
-        # Capturamos el último mensaje del usuario
-        last_user_msg = next(
-            (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), 
-            ""
-        ).strip().upper()
-
-        # Lógica de detección (puede robustecerse con el Extractor si se desea, 
-        # pero para botones/comandos simples basta con keywords)
-        if last_user_msg in ["ACEPTAR", "ACEPTO", "SI", "ACEPTA"]:
-            user_decision = "ACCEPTED"
-        elif last_user_msg in ["RECHAZAR", "RECHAZO", "NO", "RECHAZA"]:
-            user_decision = "REJECTED"
-        else:
-            # El usuario dijo algo que no es una decisión clara
-            user_decision = "PENDING"
-
-
-    # 5. ------ EVALUACIÓN DE ESTADO DE OFERTA (Paso 2.4) ------
-    application_id = session.get("application_id")
+    extracted = None
 
     # Inicializamos el output base con los metadatos de sesión
     output = {
@@ -908,6 +912,66 @@ def loan_pre_approved_node(state: FluxState) -> dict:
             "just_completed_step": None, # Limpieza por defecto
         }
     }
+
+    # 4. ------ LLAMADA A: PROCESAMIENTO DE DECISIÓN ------
+    user_decision = "PENDING"  # Por defecto
+    last_user_msg = ""
+
+    if not is_intra_turn_jump:
+        # 1. Capturamos el mensaje
+        last_user_msg = next(
+            (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), 
+            ""
+        ).strip()
+        
+        if last_user_msg:
+            # 2. LLAMADA A - Extracción de Decisión/Pregunta
+            # (Usamos el schema de loan_schemas.py)
+            raw_extraction = _flux_generator.invoke([
+                {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_DECISION},
+                {"role": "user", "content": last_user_msg}
+            ])
+
+            # --- PARSEO MANUAL ---
+            content_str = normalize_llm_response(raw_extraction.content)
+            import json, re
+            match = re.search(r"\{.*\}", content_str, re.DOTALL)
+            
+            if match:
+                try:
+                    data = json.loads(match.group())
+                    extracted = LoanDecisionExtraction(**data)
+                except Exception as e:
+                    print(f"[!!!] Error parseando decisión: {e}")
+                    extracted = LoanDecisionExtraction(decision="OTRO", razonamiento="Error")
+            else:
+                extracted = LoanDecisionExtraction(decision="OTRO", razonamiento="No JSON")
+            # ---------------------
+
+            # AÑADIMOS ESTO PARA DEBUG:
+            if extracted:
+                print(f"[DEBUG-OFFER] Decisión detectada: {extracted.decision}")
+                print(f"[DEBUG-OFFER] Razonamiento: {extracted.razonamiento}")
+
+            # 3. HOOK DE RAG: Si es pregunta, interrumpimos y respondemos
+            if extracted and extracted.decision == "PREGUNTA":
+                print(f"[DEBUG-RAG-OFFER] Pregunta detectada: {last_user_msg}")
+                rag_response = get_consultant_response(last_user_msg, state)
+                
+                output["messages"] = [AIMessage(content=rag_response)]
+                # IMPORTANTE: No cambiamos de nodo, nos quedamos en PRE_APPROVED
+                return output
+            # 4. Lógica de Decisión (Keywords para máxima seguridad)
+            # Solo si NO fue pregunta, evaluamos la decisión
+            msg_upper = last_user_msg.upper()
+            if msg_upper in ["ACEPTAR", "ACEPTO", "SI", "ACEPTA"]:
+                user_decision = "ACCEPTED"
+            elif msg_upper in ["RECHAZAR", "RECHAZO", "NO", "RECHAZA"]:
+                user_decision = "REJECTED"
+
+
+    # 5. ------ EVALUACIÓN DE ESTADO DE OFERTA (Paso 2.4) ------
+    application_id = session.get("application_id")
     
     if user_decision == "ACCEPTED":
         # A. Actualizar Progreso Histórico
