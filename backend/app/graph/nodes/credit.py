@@ -1414,72 +1414,94 @@ def loan_formalization_node(state: FluxState) -> dict:
         # Sin "messages": El nodo es invisible para el usuario
     }
 
-# ======================================================================================================
-# STUBS (v3.0)
-# ======================================================================================================
-# Cada stub cumple el contrato mínimo:
-#   1. Actualizar session["current_node"] con el valor UPPER correspondiente.
-#   2. Limpiar session["just_completed_step"] (flag volátil de turno anterior).
-#   3. Retornar el estado con los campos modificados.
-#
-# La lógica de negocio completa se implementará en sprints posteriores.
-# ======================================================================================================
-
 # ──────────────────────────────────────────────────────────────────────────────────────
 # LOAN_COMPLETED — Estado Final Exitoso
 # ──────────────────────────────────────────────────────────────────────────────────────
 
 def loan_completed_node(state: FluxState) -> dict:
     """
-    Stub: LOAN_COMPLETED.
-
-    Responsabilidades finales:
-      - Leer offer_data["loan"] y construir el mensaje de felicitaciones.
-      - Escribir flow_result con status_code = "SUCCESS".
-      - Poblar offer_data["loan"]["display_data"] para el Frontend.
-      - Limpiar current_node (flujo terminado).
+    Nodo de Cierre Exitoso: El final del camino para el Crédito de Consumo.
+    
+    Responsabilidades:
+      - Consolidar la vista final para el usuario.
+      - Notificar éxito total en los semáforos de la DB.
+      - Registrar el resultado del flujo para analítica.
     """
+    print("--- NODO: LOAN_COMPLETED ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
     session    = state.get("session", {})
-    nombre     = state.get("preparation_data", {}).get("nombre", "")
-    offer      = state.get("offer_data", {}).get("loan", {})
-    file_url   = offer.get("file_contrato_path", "")
-    sha256     = offer.get("hash_sha256", "")
+    prep_data  = state.get("preparation_data", {})
+    offer_loan = state.get("offer_data", {}).get("loan", {})
     engine     = state.get("evaluation_results", {}).get("loan_engine", {})
-    monto      = engine.get("monto_aprobado", 0)
-
+    
+    nombre   = prep_data.get("nombre", "Cliente").split()[0]
+    monto    = engine.get("monto_aprobado", 0)
+    file_url = offer_loan.get("file_contrato_path", "")
+    sha256   = offer_loan.get("hash_sha256")
+    
+    # 2. ------ EJECUCIÓN (The Messenger) ------
+    # Construimos un mensaje cálido y profesional
     mensaje = (
-        f"🥳 ¡Felicitaciones, {nombre}! Tu **Crédito de Consumo** de "
-        f"**${monto:,} CLP** está formalizado.\n\n"
-        f"📥 [Descarga tu contrato]({file_url})\n"
-        f"🔐 Hash de seguridad: `{sha256[:16]}...`"
+        f"🥳 **¡Felicitaciones, {nombre}!**\n\n"
+        f"Tu solicitud de **Crédito de Consumo** por **${monto:,} CLP** ha sido "
+        f"procesada y formalizada con éxito.\n\n"
+        f"📥 **Documentación Legal:**\n"
+        f"Ya puedes descargar tu contrato firmado digitalmente aquí: [Descargar Contrato]({file_url})\n\n"
+        f"🔐 **Seguridad Flux:**\n"
+        f"El documento ha sido sellado con un hash SHA-256 para garantizar su integridad:\n"
+        f"`{sha256[:16] if sha256 else 'N/A'}...`"
     )
 
-    from langchain_core.messages import AIMessage
+    # 3. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="LOAN_COMPLETED",
+            node_status="SUCCESS",
+            engine_status="SUCCESS",
+            document_status="GENERATED"
+        )
+
+    # 4. ------ ACTUALIZACIÓN DE ESTADO (The State Manager) ------
+    # A. Resultado del Flujo (Analítica)
+    flow_result = {
+        "status_code":  "SUCCESS",
+        "close_reason": None,
+        "product_name": "Crédito de Consumo",
+        "closed_at":    _dt.datetime.utcnow().isoformat(),
+    }
+    
+    # B. Datos de Visualización Final (Frontend)
+    updated_display = {
+        "download_url":  file_url,
+        "main_detail":   f"Monto: ${monto:,} CLP",
+        "security_hash": sha256,
+        "reason":        None
+    }
+    
+    # C. Consolidación de la Oferta
+    updated_offer_loan = {
+        **offer_loan,
+        "display_data": updated_display
+    }
+
+    # 5. ------ SALIDA (The Final Jump) ------
     return {
         "session": {
             **session,
             "current_node":      "LOAN_COMPLETED",
             "previous_node":     session.get("current_node"),
-            "just_completed_step": None,
+            "just_completed_step": None, # Nodo terminal
         },
-        "flow_result": {
-            "status_code":  "SUCCESS",
-            "close_reason": None,
-            "product_name": "Crédito de Consumo",
-            "closed_at":    _dt.datetime.utcnow().isoformat(),
-        },
+        "flow_result": flow_result,
         "offer_data": {
-            "loan": {
-                **offer,
-                "display_data": {
-                    "download_url":  file_url,
-                    "main_detail":   f"Monto: ${monto:,} CLP",
-                    "security_hash": sha256,
-                    "reason":        None,
-                }
-            }
+            **state.get("offer_data", {}),
+            "loan": updated_offer_loan
         },
-        "messages": [AIMessage(content=mensaje)],
+        "messages": [AIMessage(content=mensaje)]
     }
 
 # ======================================================================================================

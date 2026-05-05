@@ -63,9 +63,9 @@ class PDFFactory:
                     ("Valor de Cuota", f"${data.get('cuota_mensual', 0):,} CLP")
                 ],
                 "legal": [
-                    "• El cliente acepta los términos del crédito de consumo Flux.",
-                    "• El monto será depositado tras la verificación final.",
-                    "• La mora generará intereses según la tasa máxima convencional."
+                    "El cliente acepta los términos del crédito de consumo Flux.",
+                    "El monto será depositado tras la verificación final.",
+                    "La mora generará intereses según la tasa máxima convencional."
                 ]
             }
         

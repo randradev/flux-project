@@ -209,21 +209,34 @@ def update_application_semaphores(
 
 def upload_contract_to_storage(file_path: str, bucket_name: str = "contracts") -> str | None:
     """
-    Sube un archivo PDF al storage de Supabase.
+    Sube un archivo PDF al storage de Supabase con un sufijo único para evitar errores de duplicidad.
     """
     import os
+    import time
     try:
         if not os.path.exists(file_path):
+            print(f"ERROR: Archivo no encontrado para subir: {file_path}")
             return None
-        file_name = os.path.basename(file_path)
+
+        # 1. Generar nombre único usando el nombre base + timestamp
+        base_name = os.path.basename(file_path)
+        name, ext = os.path.splitext(base_name)
+        unique_name = f"{name}_{int(time.time())}{ext}" # Ejemplo: contrato_190541142_1714950000.pdf
+        
+        # 2. Subida en binario
         with open(file_path, "rb") as f:
             supabase_admin.storage.from_(bucket_name).upload(
-                path=file_name,
+                path=unique_name,
                 file=f,
                 file_options={"content-type": "application/pdf"}
             )
-        public_url = supabase_admin.storage.from_(bucket_name).get_public_url(file_name)
+            
+        # 3. Obtener URL pública
+        public_url = supabase_admin.storage.from_(bucket_name).get_public_url(unique_name)
+        print(f"✅ Archivo subido exitosamente a Supabase: {public_url}")
         return public_url
+        
     except Exception as e:
-        print(f"❌ Error subiendo archivo a Supabase: {e}")
-        return None
+        print(f"❌ Error subiendo archivo a Supabase Storage: {e}")
+        return None
+
