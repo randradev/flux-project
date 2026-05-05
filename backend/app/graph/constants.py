@@ -27,6 +27,7 @@ class CompletedStep:
     # ── Formalización (NUEVOS) ────────────────────────────────
     LOAN_PRE_APPROVED  = "LOAN_PRE_APPROVED"   # Usuario aceptó la oferta
     LOAN_OTP_SUCCESS   = "LOAN_OTP_SUCCESS"    # OTP validado correctamente
+    LOAN_FORMALIZATION_SUCCESS = "LOAN_FORMALIZATION_SUCCESS"   # Formalización exitosa
 
     # ── Excepciones (NUEVOS) ──────────────────────────────────
     LOAN_SECURITY_BLOCK  = "LOAN_SECURITY_BLOCK"   # 3 intentos OTP fallidos

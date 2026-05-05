@@ -204,3 +204,26 @@ def update_application_semaphores(
         # Logueamos el error pero no rompemos el flujo del bot
         # Es preferible que el bot siga aunque el semáforo de la DB falle
         print(f"ERROR: No se pudieron actualizar los semáforos en DB: {e}")
+
+# ── Helpers de Storage (Archivos) ─────────────────────────────
+
+def upload_contract_to_storage(file_path: str, bucket_name: str = "contracts") -> str | None:
+    """
+    Sube un archivo PDF al storage de Supabase.
+    """
+    import os
+    try:
+        if not os.path.exists(file_path):
+            return None
+        file_name = os.path.basename(file_path)
+        with open(file_path, "rb") as f:
+            supabase_admin.storage.from_(bucket_name).upload(
+                path=file_name,
+                file=f,
+                file_options={"content-type": "application/pdf"}
+            )
+        public_url = supabase_admin.storage.from_(bucket_name).get_public_url(file_name)
+        return public_url
+    except Exception as e:
+        print(f"❌ Error subiendo archivo a Supabase: {e}")
+        return None

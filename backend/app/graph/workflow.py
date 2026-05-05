@@ -65,6 +65,7 @@ from app.graph.edges import (
     route_after_loan_risk_engine,
     route_after_loan_pre_approved,
     route_after_loan_otp_validation,
+    route_after_loan_formalization,
     # Cuenta Corriente
     route_after_account_collecting_profile,
 )
@@ -178,6 +179,7 @@ def build_graph() -> StateGraph:
             # Reanudación de oferta/OTP
             "loan_pre_approved":           "loan_pre_approved",
             "loan_otp_validation":         "loan_otp_validation",
+            
             # Saltos por éxito (desde _SUCCESS_MAP vía P1)
             "loan_risk_engine":            "loan_risk_engine",
             "loan_formalization":          "loan_formalization",
@@ -264,9 +266,15 @@ def build_graph() -> StateGraph:
         }
     )
 
-    # Formalización → Completado (edge fijo: nodo de servicio automático)
-    # Si GENERATION_FAILED, se añadirá un edge a SERVICE_ERROR en sprint futuro.
-    graph.add_edge("loan_formalization", "loan_completed")
+   # Formalización → Completado (Bifurcación condicional)
+    graph.add_conditional_edges(
+        "loan_formalization",
+        route_after_loan_formalization,
+        {
+            "loan_completed": "loan_completed",
+            END: END
+        }
+    )
 
     # Nodos terminales → END
     graph.add_edge("loan_completed",      END)

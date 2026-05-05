@@ -96,7 +96,7 @@ _SUCCESS_MAP: dict[str, dict[str, str]] = {
         CompletedStep.LOAN_RISK_SUCCESS:  "loan_pre_approved",
         CompletedStep.LOAN_PRE_APPROVED:  "loan_otp_validation",
         CompletedStep.LOAN_OTP_SUCCESS:   "loan_formalization",
-        "LOAN_FORMALIZATION_SUCCESS":      "loan_completed",
+        CompletedStep.LOAN_FORMALIZATION_SUCCESS: "loan_completed",
         
         CompletedStep.LOAN_RISK_REJECTED: "loan_rejected_policy",
         CompletedStep.LOAN_CLOSED_BY_USER: "loan_closed_by_user",
@@ -159,7 +159,7 @@ def _get_completed_steps_for_product(state: dict, product: str) -> list[str]:
             completed.append(CompletedStep.LOAN_SECURITY_BLOCK)
         # D. Formalización (Final del flujo)
         if product_progress.get("contract_signed"):
-            completed.append("LOAN_FORMALIZATION_SUCCESS")
+            completed.append(CompletedStep.LOAN_FORMALIZATION_SUCCESS)
     
     elif product == "ACCOUNT":
         if product_progress.get("profile_completed"):
@@ -371,6 +371,19 @@ def route_after_loan_otp_validation(state: FluxState) -> str:
         return "loan_security_block"
 
     return END  # Código incorrecto: esperar reintento del usuario
+
+def route_after_loan_formalization(state: FluxState) -> str:
+    """
+    Ruteador post-formalización.
+    Solo permite el avance al éxito si el contrato se selló y subió correctamente.
+    """
+    session = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.LOAN_FORMALIZATION_SUCCESS:
+        return "loan_completed"
+
+    return END # Si falló (None), el flujo se detiene por seguridad.
 
 # ──────────────────────────────────────────────────────────────────────────────────────
 # DECISIONES DE ARISTAS NODOS DE CUENTA CORRIENTE

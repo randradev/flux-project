@@ -54,6 +54,10 @@ class LoanProgress(TypedDict, total=False):
     """Registro histórico de completitud del flujo de crédito."""
     profile_completed:    bool   # True cuando loan_profile tiene todos los campos
     simulation_completed: bool   # True cuando loan_sim tiene monto y plazo
+    risk_engine_completed: bool   # <--- AGREGAR
+    pre_approval_accepted: bool   # <--- AGREGAR
+    otp_validated:         bool   # <--- AGREGAR
+    contract_signed:       bool   # <--- AGREGAR (Para formalización)
 
 class AccountProgress(TypedDict, total=False):
     """Registro histórico de completitud del flujo de cuenta corriente."""
