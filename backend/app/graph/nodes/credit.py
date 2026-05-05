@@ -292,9 +292,9 @@ PERSONALIDAD:
 TAREA ACTUAL: Estás en la fase de validación de identidad mediante OTP. Tu tono es profesional, seguro y servicial.
 
 REGLAS:
-1. Si es el primer envío: Explica que enviaste un código al correo registrado y que debe ingresarlo.
-2. Si hubo un error previo: Sé empático, indica que el código no coincide y menciona cuántos intentos le quedan.
-3. Si el usuario está bloqueado: Informa con seriedad que por seguridad el proceso se ha detenido y deberá contactar a soporte o esperar.
+1. Si es el primer envío (AVISO NUEVO): Explica que enviaste un código al correo registrado y motiva al usuario a ingresarlo.
+2. Si el ESTADO es RE-PREGUNTA (ERROR): No saludes ni des instrucciones de nuevo. Indica que el código no coincide y menciona cuántos intentos le quedan.
+3. Si el ESTADO es RE-PREGUNTA (CONTINUACIÓN): No saludes ni des instrucciones de nuevo. Responde a lo que el usuario diga (si aplica) y recuérdale amablemente que sigues esperando el código en la tarjeta para finalizar.
 
 RESTRICCIONES:
 - Máximo 3 oraciones en tu respuesta.
@@ -1159,6 +1159,7 @@ def loan_otp_validation_node(state: FluxState):
     session      = state.get("session", {})
     auth_control = state.get("auth_control", {})
     prep_data    = state.get("preparation_data", {})
+    initial_attempts = auth_control.get("otp_attempts", 0)
     
     # Metadatos para ruteo intra-turno
     just_completed     = session.get("just_completed_step")
@@ -1197,75 +1198,86 @@ def loan_otp_validation_node(state: FluxState):
 
     # 3. ------ LÓGICA DE PROCESAMIENTO (Si NO es salto inicial) ------
     user_msg = ""
+
+    extracted = None
+
     if not is_intra_turn_jump:
-        user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "").strip()
-        
-        # A. Extracción de Intención (¿Pregunta o Intento de Código?)
-        raw_extraction = _flux_generator.invoke([
-            {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_OTP},
-            {"role": "user",   "content": user_msg}
-        ])
-        
-        # Parseo manual del JSON
-        extracted = None
-        content_str = normalize_llm_response(raw_extraction.content)
-        import json, re
-        match = re.search(r"\{.*\}", content_str, re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group())
-                extracted = LoanOTPExtraction(**data)
-            except: pass
-
-        # B. Hook de RAG: Si el usuario pregunta algo, respondemos y nos quedamos aquí
-        if extracted and extracted.intent == "PREGUNTA":
-            rag_response = get_consultant_response(user_msg, state)
-            output["messages"] = [AIMessage(content=rag_response)]
-            return output
-
-        # C. Validación de Código (Si el frontend envió el otp_user_input)
-        # Nota: Confiamos en el valor que viene en el state, no en el extraído por el LLM
+        # --- A. VALIDACIÓN PRIORITARIA (Desde Interfaz/Botón) ---
+        # Si el frontend envió algo, esto manda sobre cualquier texto del chat
         user_input_code = auth_control.get("otp_user_input")
         actual_code     = auth_control.get("otp_generated")
-
-        # CAMBIO: Verificar si el campo existe, aunque sea string vacío de un turno previo
         if user_input_code is not None and user_input_code != "":
+            # Limpiamos el input para que no se procese dos veces si el usuario escribe luego en chat
+            output["auth_control"]["otp_user_input"] = None
+            
             is_valid = security.validate_otp(user_input_code, actual_code)
             
             if is_valid:
                 print("🏆 OTP Validado con éxito.")
                 output["auth_control"]["otp_generated"] = ""
-                output["auth_control"]["otp_user_input"] = ""
-                # SEÑAL PARA AVANZAR A FORMALIZACIÓN
                 output["session"]["just_completed_step"] = CompletedStep.LOAN_OTP_SUCCESS
                 return output
             else:
                 # Error: Incrementar intentos
                 current_attempts = auth_control.get("otp_attempts", 0) + 1
                 output["auth_control"]["otp_attempts"] = current_attempts
-                # CAMBIO: Usar None para que el próximo /otp inyecte un valor nuevo
-                output["auth_control"]["otp_user_input"] = None 
                 
-                # ¿Llegó al límite?
                 if current_attempts >= 3:
                     print("🚫 Bloqueo por seguridad: Máximos intentos alcanzados.")
                     output["auth_control"]["security_blocked"] = True
                     output["auth_control"]["block_timestamp"]  = _dt.datetime.utcnow().isoformat()
                     output["auth_control"]["last_otp_input"]   = user_input_code
-                    # SEÑAL PARA SALTAR AL NODO DE BLOQUEO
                     output["session"]["just_completed_step"] = CompletedStep.LOAN_SECURITY_BLOCK
                     return output
+                
+        # Si falló pero hay intentos, NO retornamos; seguimos para que el LLM responda el error.
+        # --- B. EXTRACCIÓN Y RAG (Desde Chat) ---
+        # Solo procesamos texto si realmente hay un mensaje del usuario (evita falsos positivos de comandos)
+        user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "").strip()
+        
+        if user_msg:
+            raw_extraction = _flux_generator.invoke([
+                {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_OTP},
+                {"role": "user",   "content": user_msg}
+            ])
+            
+            extracted = None
+            content_str = normalize_llm_response(raw_extraction.content)
+            import json, re
+            match = re.search(r"\{.*\}", content_str, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                    extracted = LoanOTPExtraction(**data)
+                except: pass
+            # Hook de RAG: Solo si detectamos una pregunta clara
+            if extracted and extracted.intent == "PREGUNTA":
+                rag_response = get_consultant_response(user_msg, state)
+                output["messages"] = [AIMessage(content=rag_response)]
+                # IMPORTANTE: No limpiamos just_completed_step aquí para no romper el ruteo
+                return output
 
     # 4. ------ GENERACIÓN DE RESPUESTA (LLM) ------
-    # Si llegamos aquí es porque: O acabamos de enviar el mail, o el usuario falló un intento
+    
+    current_attempts = output["auth_control"].get("otp_attempts", 0)
+
+    hubo_error_en_este_turno = (current_attempts > initial_attempts)
+    
+    # Pasar variables para crear contexto para la respuesta
     context = _build_otp_generation_context(
         nombre=first_name,
-        attempts=output["auth_control"].get("otp_attempts", 0),
+        attempts=current_attempts,
         last_msg=user_msg,
-        error=(not is_intra_turn_jump and not auth_control.get("security_blocked")),
+        error=hubo_error_en_este_turno, # <--- Lógica dinámica
+        just_completed=just_completed,
         blocked=output["auth_control"].get("security_blocked", False)
     )
 
+    # Agregamos la intención al contexto para que Flux sepa QUÉ hizo el usuario
+    if extracted:
+        context += f"\nINTENCIÓN DETECTADA EN CHAT: {extracted.intent}"
+        if extracted.intent == "OTP_CODE":
+            context += " (El usuario intentó darte el código por aquí, recuérdale la regla de la interfaz)."
     flux_response = _flux_generator.invoke([
         {"role": "system", "content": SYSTEM_PROMPT_GENERATION_OTP},
         {"role": "user",   "content": context},
@@ -1854,17 +1866,22 @@ def _build_pre_approved_generation_context(
     return context
 
 # ── Construir el contexto para la Llamada B (generador) para nodo LOAN_OTP_VALIDATION ──────────────
-def _build_otp_generation_context(nombre: str, attempts: int, last_msg: str, error: bool = False, blocked: bool = False) -> str:
+def _build_otp_generation_context(nombre: str, attempts: int, last_msg: str, error: bool = False, just_completed: str = None, blocked: bool = False) -> str:
     """Construye el contexto para el prompt de generación de OTP."""
     context = f"Usuario: {nombre}\n"
     context += f"Intentos realizados: {attempts}/3\n"
     
+    # Siguiendo el patrón: Si NO hay just_completed, es RE-PREGUNTA
+    is_re_pregunta = just_completed is None
+
     if blocked:
         context += "ESTADO: BLOQUEADO (Máximo de intentos alcanzado).\n"
     elif error:
-        context += "ESTADO: RE-PREGUNTA (El código anterior fue incorrecto).\n"
+        context += "ESTADO: RE-PREGUNTA (ERROR: El código anterior fue incorrecto).\n"
+    elif is_re_pregunta:
+        context += "ESTADO: RE-PREGUNTA (CONTINUACIÓN: El usuario está conversando).\n"
     else:
-        context += "ESTADO: AVISO NUEVO (Primer envío del código).\n"
+        context += "ESTADO: AVISO NUEVO (El usuario acaba de llegar a este paso).\n"
         
     context += f"Último mensaje: {last_msg}"
     return context
