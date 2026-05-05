@@ -139,9 +139,9 @@ class ConversationSimulator:
         checkpoint = self.graph.get_state(self.config)
         return checkpoint.values if checkpoint else {}
 
-    def send(self, user_input: str, *, inject_product_intent: str = None) -> dict:
+    def send(self, user_input: str, *, inject_product_intent: str = None, state_update: dict = None) -> dict:
         """
-        Envía un mensaje al grafo y retorna el State resultante.
+        Envía un mensaje al grafo y permite inyectar actualizaciones directas al State.
         """
         self.turn_number += 1
         
@@ -173,10 +173,18 @@ class ConversationSimulator:
             if inject_product_intent:
                 session_patch["product_intent"] = inject_product_intent
 
-            turn_input = {"messages": [HumanMessage(content=user_input)]}
+            turn_input = {"messages": [HumanMessage(content=effective_input)] if user_input else []}
             if session_patch:
                 current = self._get_current_state()
                 turn_input["session"] = {**current.get("session", {}), **session_patch}
+
+        # 2. Aplicar actualizaciones directas de estado (Simulación de Interfaz)
+        if state_update:
+            for key, value in state_update.items():
+                if key in turn_input and isinstance(turn_input[key], dict) and isinstance(value, dict):
+                    turn_input[key] = {**turn_input[key], **value}
+                else:
+                    turn_input[key] = value
 
         snapshot_before = _extract_state_snapshot(self._get_current_state())
 
@@ -369,6 +377,19 @@ def scenario_manual_test():
                 break
 
             # --- MAPEADOR DE BOTONES SIMULADOS ---
+            if user_msg.startswith("/otp "):
+                code = user_msg.replace("/otp ", "").strip()
+                # LEER EL ESTADO ACTUAL ANTES DE ENVIAR
+                current_state = sim._get_current_state()
+                current_auth = current_state.get("auth_control", {})
+                
+                # CREAR UN UPDATE QUE PRESERVE LO ANTERIOR
+                new_auth = {**current_auth, "otp_user_input": code}
+                
+                print(f"{YELLOW}[Simulación] Interfaz: Ingresando código {code}{RESET}")
+                sim.send("", state_update={"auth_control": new_auth})
+                continue
+
             command_map = {
                 "/acepto":   "ACEPTAR",
                 "/si":       "ACEPTAR",

@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     database_url: str  # Para el PostgresSaver de LangGraph
 
+    # ── Resend ──────────────────────────────────────────────
+    resend_api_key: str | None = None
+
     # ── App Settings ──────────────────────────────────────────
     debug: bool = False
     app_name: str = "FLUX-Backend"

@@ -11,14 +11,14 @@ Ruta del grafo: loan_init → loan_risk_engine → END
 from langchain_core.messages import AIMessage, HumanMessage
 from app.infra.gemini_client import get_structured_model, get_generation_model
 from app.graph.state import FluxState
-from app.graph.nodes.schemas.loan_schemas import LoanProfileExtraction, LoanSimExtraction, LoanDecisionExtraction
+from app.graph.nodes.schemas.loan_schemas import LoanProfileExtraction, LoanSimExtraction, LoanDecisionExtraction, LoanOTPExtraction
 from app.infra.supabase import update_application_semaphores
 from app.modules.credit_eng import CreditEngine, PolicyRejectionError, PaymentCapacityError
 from app.utils.llm_utils import normalize_llm_response
 from app.graph.constants import CompletedStep
 from langchain_core.outputs import LLMResult
 from app.modules.consultant import get_consultant_response
-
+from app.modules import security
 
 # ======================================================================================================
 # LLM Y PROMPTS
@@ -253,6 +253,58 @@ RESTRICCIONES:
 MANEJO DE DUDAS:
 - Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe usar los botones de la tarjeta de abajo para que la aceptación sea oficial.
 """
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPTS EN NODO LOAN_OTP_VALIDATION ──────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT_EXTRACTION_OTP = """
+Eres un motor de extracción de datos. Tu ÚNICA misión es analizar el mensaje del usuario y retornar un JSON estructurado VÁLIDO.
+
+REGLAS DE FORMATO:
+- NO uses bloques de código Markdown (prohibido usar ```json).
+- Retorna estrictamente un objeto JSON con los campos 'intent' y 'razonamiento'.
+
+INTENCIONES POSIBLES ('intent'):
+- OTP_CODE: El usuario intenta ingresar el código que recibió en su mail.
+- PREGUNTA: El usuario tiene una duda técnica (Cantidad de intentos, nuevo envío, etc.).
+- OTRO: Saludos o irrelevante.
+
+REGLA DE ORO: Si hay una PREGUNTA, la decisión DEBE ser 'PREGUNTA', aunque también parezca ingresar un código.
+
+EJEMPLO:
+Usuario: "Bacán, pero ¿cuántos intentos tengo?"
+-> {
+    "intent": "PREGUNTA",
+    "razonamiento": "Usuario pregunta por la cantidad de intentos que le quedan."
+}
+"""
+
+SYSTEM_PROMPT_GENERATION_OTP = """
+Eres Flux, el genio amigable de las finanzas en Chile. 
+
+PERSONALIDAD:
+- Hablas de tú, eres cercano y usas modismos chilenos con moderación.
+- Eres ágil: no das rodeos innecesarios, pero sí eres empático.
+- Si el contexto indica que es la primera vez que le envían un código OTP en esta sesión, usa frases de información y motivación para ingresar el código ("¡Listo! Te enviamos un código de 6 dígitos a tu correo registrado." "¡Ahora solo queda este paso de seguridad! Ingresa el código que te enviamos al correo y quedamos listos", "¡Estamos a punto de lograrlo!, Solo falta que ingreses el código que te enviamos al correo, ¡y listo!").
+- Si el contexto no indica un aviso nuevo (RE-PREGUNTA), evita informar de nuevo; asume que el usuario ya sabe y recuérdale la cantidad de intentos restantes.
+
+TAREA ACTUAL: Estás en la fase de validación de identidad mediante OTP. Tu tono es profesional, seguro y servicial.
+
+REGLAS:
+1. Si es el primer envío: Explica que enviaste un código al correo registrado y que debe ingresarlo.
+2. Si hubo un error previo: Sé empático, indica que el código no coincide y menciona cuántos intentos le quedan.
+3. Si el usuario está bloqueado: Informa con seriedad que por seguridad el proceso se ha detenido y deberá contactar a soporte o esperar.
+
+RESTRICCIONES:
+- Máximo 3 oraciones en tu respuesta.
+- NUNCA menciones el código real en el chat.
+- Refuerza SIEMPRE que el ingreso del código, por la seguridad del propio cliente, se realiza mediante la interfaz.
+
+MANEJO DE DUDAS:
+- Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe usar los botones de la tarjeta de abajo para que la aceptación sea oficial. 
+"""
+
 
 # ======================================================================================================
 # NODOS DEL FLUJO DE CREDITO DE CONSUMO
@@ -1091,6 +1143,142 @@ def loan_pre_approved_node(state: FluxState) -> dict:
 
     return output
 
+# ──────────────────────────────────────────────────────────────────────────────────────
+# LOAN_OTP_VALIDATION — Validación del código enviado por email
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def loan_otp_validation_node(state: FluxState):
+    """
+    Nodo de validación de identidad mediante OTP.
+    Maneja el envío inicial, la validación de intentos y el bloqueo de seguridad.
+    """
+    print("--- NODO: LOAN_OTP_VALIDATION ---")
+    
+    # 1. ------ PREPARACIÓN DE DATOS (Handshake) ------
+    messages     = state.get("messages", [])
+    session      = state.get("session", {})
+    auth_control = state.get("auth_control", {})
+    prep_data    = state.get("preparation_data", {})
+    
+    # Metadatos para ruteo intra-turno
+    just_completed     = session.get("just_completed_step")
+    is_intra_turn_jump = just_completed == CompletedStep.LOAN_PRE_APPROVED
+    
+    # Datos del usuario
+    first_name = prep_data.get("nombre", "Usuario").split()[0]
+    mail       = prep_data.get("mail")
+    
+    # Inicializamos el output base
+    output = {
+        "session": {
+            **session,
+            "current_node": "LOAN_OTP_VALIDATION",
+            "just_completed_step": None, # Por defecto no avanzamos
+        },
+        "auth_control": {**auth_control}
+    }
+
+    # 2. ------ LÓGICA DE DISPARO INICIAL (Envío de Mail) ------
+    # Si venimos saltando del nodo anterior y no hemos generado código aún
+    if is_intra_turn_jump and not auth_control.get("otp_generated"):
+        print(f"[OTP] Generando y enviando código a {mail}...")
+        
+        new_code = security.generate_otp()
+        success  = security.send_otp_email(mail, new_code)
+        
+        if success:
+            output["auth_control"]["otp_generated"] = new_code
+            output["auth_control"]["otp_attempts"]  = 0
+            # Continuamos a la fase de generación de respuesta para informar al usuario
+        else:
+            # Error de servicio (Resend falló)
+            output["auth_control"]["service_error"] = True
+            # Aquí podrías decidir si mandas a SERVICE_ERROR o reintentas
+
+    # 3. ------ LÓGICA DE PROCESAMIENTO (Si NO es salto inicial) ------
+    user_msg = ""
+    if not is_intra_turn_jump:
+        user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "").strip()
+        
+        # A. Extracción de Intención (¿Pregunta o Intento de Código?)
+        raw_extraction = _flux_generator.invoke([
+            {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_OTP},
+            {"role": "user",   "content": user_msg}
+        ])
+        
+        # Parseo manual del JSON
+        extracted = None
+        content_str = normalize_llm_response(raw_extraction.content)
+        import json, re
+        match = re.search(r"\{.*\}", content_str, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group())
+                extracted = LoanOTPExtraction(**data)
+            except: pass
+
+        # B. Hook de RAG: Si el usuario pregunta algo, respondemos y nos quedamos aquí
+        if extracted and extracted.intent == "PREGUNTA":
+            rag_response = get_consultant_response(user_msg, state)
+            output["messages"] = [AIMessage(content=rag_response)]
+            return output
+
+        # C. Validación de Código (Si el frontend envió el otp_user_input)
+        # Nota: Confiamos en el valor que viene en el state, no en el extraído por el LLM
+        user_input_code = auth_control.get("otp_user_input")
+        actual_code     = auth_control.get("otp_generated")
+
+        # CAMBIO: Verificar si el campo existe, aunque sea string vacío de un turno previo
+        if user_input_code is not None and user_input_code != "":
+            is_valid = security.validate_otp(user_input_code, actual_code)
+            
+            if is_valid:
+                print("🏆 OTP Validado con éxito.")
+                output["auth_control"]["otp_generated"] = ""
+                output["auth_control"]["otp_user_input"] = ""
+                # SEÑAL PARA AVANZAR A FORMALIZACIÓN
+                output["session"]["just_completed_step"] = CompletedStep.LOAN_OTP_SUCCESS
+                return output
+            else:
+                # Error: Incrementar intentos
+                current_attempts = auth_control.get("otp_attempts", 0) + 1
+                output["auth_control"]["otp_attempts"] = current_attempts
+                # CAMBIO: Usar None para que el próximo /otp inyecte un valor nuevo
+                output["auth_control"]["otp_user_input"] = None 
+                
+                # ¿Llegó al límite?
+                if current_attempts >= 3:
+                    print("🚫 Bloqueo por seguridad: Máximos intentos alcanzados.")
+                    output["auth_control"]["security_blocked"] = True
+                    output["auth_control"]["block_timestamp"]  = _dt.datetime.utcnow().isoformat()
+                    output["auth_control"]["last_otp_input"]   = user_input_code
+                    # SEÑAL PARA SALTAR AL NODO DE BLOQUEO
+                    output["session"]["just_completed_step"] = CompletedStep.LOAN_SECURITY_BLOCK
+                    return output
+
+    # 4. ------ GENERACIÓN DE RESPUESTA (LLM) ------
+    # Si llegamos aquí es porque: O acabamos de enviar el mail, o el usuario falló un intento
+    context = _build_otp_generation_context(
+        nombre=first_name,
+        attempts=output["auth_control"].get("otp_attempts", 0),
+        last_msg=user_msg,
+        error=(not is_intra_turn_jump and not auth_control.get("security_blocked")),
+        blocked=output["auth_control"].get("security_blocked", False)
+    )
+
+    flux_response = _flux_generator.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_GENERATION_OTP},
+        {"role": "user",   "content": context},
+    ])
+    
+    clean_content = normalize_llm_response(flux_response.content)
+    output["messages"] = [AIMessage(content=clean_content)]
+
+    # 5. ------ MARTILLAZO DE LIMPIEZA ------
+    output["session"]["just_completed_step"] = None
+    
+    return output
+
 # ======================================================================================================
 # STUBS (v3.0)
 # ======================================================================================================
@@ -1101,52 +1289,6 @@ def loan_pre_approved_node(state: FluxState) -> dict:
 #
 # La lógica de negocio completa se implementará en sprints posteriores.
 # ======================================================================================================
-
-# ──────────────────────────────────────────────────────────────────────────────────────
-# LOAN_OTP_VALIDATION — Validación del código enviado por email
-# ──────────────────────────────────────────────────────────────────────────────────────
-
-def loan_otp_validation_node(state: FluxState) -> dict:
-    """
-    Stub: LOAN_OTP_VALIDATION.
-
-    Responsabilidades finales:
-      - Al entrar por primera vez: generar el OTP (6 dígitos) y enviarlo por email.
-      - Leer auth_control["otp_user_input"] del turno actual.
-      - Comparar con auth_control["otp_generated"].
-      - Si coincide: setear just_completed_step = LOAN_OTP_SUCCESS.
-      - Si falla y intentos < 3: incrementar otp_attempts, pedir reintento.
-      - Si falla y intentos == 3: setear just_completed_step = LOAN_SECURITY_BLOCK.
-    """
-    session      = state.get("session", {})
-    auth_control = state.get("auth_control", {})
-    nombre       = state.get("preparation_data", {}).get("nombre", "")
-    mail         = state.get("preparation_data", {}).get("mail", "")
-
-    # STUB: Simula validación exitosa para pruebas de ruteo.
-    # ─── REEMPLAZAR por lógica real en Sprint correspondiente ───
-    just_completed = CompletedStep.LOAN_OTP_SUCCESS  # stub: siempre válido
-    mensaje = (
-        f"✅ ¡Código verificado, {nombre}! "
-        "Estamos generando tu contrato..."
-    )
-    # ────────────────────────────────────────────────────────────
-
-    from langchain_core.messages import AIMessage
-    return {
-        "session": {
-            **session,
-            "current_node":      "LOAN_OTP_VALIDATION",
-            "previous_node":     session.get("current_node"),
-            "just_completed_step": just_completed,
-        },
-        "auth_control": {
-            **auth_control,
-            "otp_attempts": auth_control.get("otp_attempts", 0),
-        },
-        "messages": [AIMessage(content=mensaje)],
-    }
-
 
 # ──────────────────────────────────────────────────────────────────────────────────────
 # LOAN_FORMALIZATION — Generación y Sellado del Contrato PDF
@@ -1711,6 +1853,21 @@ def _build_pre_approved_generation_context(
     """
     return context
 
+# ── Construir el contexto para la Llamada B (generador) para nodo LOAN_OTP_VALIDATION ──────────────
+def _build_otp_generation_context(nombre: str, attempts: int, last_msg: str, error: bool = False, blocked: bool = False) -> str:
+    """Construye el contexto para el prompt de generación de OTP."""
+    context = f"Usuario: {nombre}\n"
+    context += f"Intentos realizados: {attempts}/3\n"
+    
+    if blocked:
+        context += "ESTADO: BLOQUEADO (Máximo de intentos alcanzado).\n"
+    elif error:
+        context += "ESTADO: RE-PREGUNTA (El código anterior fue incorrecto).\n"
+    else:
+        context += "ESTADO: AVISO NUEVO (Primer envío del código).\n"
+        
+    context += f"Último mensaje: {last_msg}"
+    return context
 
 
 # ── Gestionar re-preguntas con contexto

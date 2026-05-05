@@ -160,3 +160,17 @@ class LoanSimExtraction(BaseModel):
 class LoanDecisionExtraction(BaseModel):
     decision: str = Field(description="ACCEPTED, REJECTED, PREGUNTA, u OTRO")
     razonamiento: str = Field(description="Breve explicación de la elección")
+
+class LoanOTPExtraction(BaseModel):
+    """
+    Extracción de intención en el paso de validación OTP.
+    """
+    intent: Literal["OTP_CODE", "PREGUNTA", "OTRO"] = Field(
+        description="OTP_CODE si parece un código de 6 dígitos, PREGUNTA si es una duda, OTRO para ruido."
+    )
+    otp_value: str | None = Field(
+        None, description="El código de 6 dígitos encontrado, si aplica."
+    )
+    razonamiento: str = Field(
+        description="Breve explicación de por qué se clasificó así."
+    )

@@ -91,17 +91,15 @@ _VALID_DESTINATION_NODES: frozenset[str] = frozenset({
 # VERSIÓN 2.0: Flujo completo de crédito definido.
 _SUCCESS_MAP: dict[str, dict[str, str]] = {
     "LOAN": {
-        # Recolección
-        CompletedStep.LOAN_PROFILE:    "loan_collecting_simulation",
-        CompletedStep.LOAN_SIMULATION: "loan_risk_engine",
-        # Evaluación → Oferta
+        CompletedStep.LOAN_PROFILE:       "loan_collecting_simulation",
+        CompletedStep.LOAN_SIMULATION:    "loan_risk_engine",
         CompletedStep.LOAN_RISK_SUCCESS:  "loan_pre_approved",
-        CompletedStep.LOAN_RISK_REJECTED: "loan_rejected_policy",
-        # Oferta → OTP
         CompletedStep.LOAN_PRE_APPROVED:  "loan_otp_validation",
-        CompletedStep.LOAN_CLOSED_BY_USER: "loan_closed_by_user",
-        # OTP → Formalización
         CompletedStep.LOAN_OTP_SUCCESS:   "loan_formalization",
+        "LOAN_FORMALIZATION_SUCCESS":      "loan_completed",
+        
+        CompletedStep.LOAN_RISK_REJECTED: "loan_rejected_policy",
+        CompletedStep.LOAN_CLOSED_BY_USER: "loan_closed_by_user",
         CompletedStep.LOAN_SECURITY_BLOCK: "loan_security_block",
     },
     "ACCOUNT": {
@@ -124,20 +122,45 @@ def _infer_product_from_node(current_node: str) -> str | None:
     return ProductPrefix.from_node(current_node)
 
 
-def _get_completed_steps_for_product(progress: dict, product: str) -> list[str]:
+def _get_completed_steps_for_product(state: dict, product: str) -> list[str]:
     """
     Retorna lista de pasos completados para un producto, en orden cronológico.
     Usado por P1 para verificar si hay un salto de éxito pendiente.
     """
+    progress = state.get("session", {}).get("progress", {})
     product_progress = progress.get(product.lower(), {})
     completed = []
+    
+    # CRÉDITO DE CONSUMO
     if product == "LOAN":
+        # A. Recolección
         if product_progress.get("profile_completed"):
             completed.append(CompletedStep.LOAN_PROFILE)
         if product_progress.get("simulation_completed"):
             completed.append(CompletedStep.LOAN_SIMULATION)
+            
+        # B. Evaluación
         if product_progress.get("risk_engine_completed"):
-            completed.append(CompletedStep.LOAN_RISK_SUCCESS)
+            # Discriminamos éxito vs rechazo
+            engine_status = state.get("evaluation_results", {}).get("loan_engine", {}).get("status_proceso")
+            if engine_status == "PRE_APPROVED":
+                completed.append(CompletedStep.LOAN_RISK_SUCCESS)
+            else:
+                completed.append(CompletedStep.LOAN_RISK_REJECTED)
+        # C. Oferta y OTP
+        if product_progress.get("pre_approval_accepted"):
+            completed.append(CompletedStep.LOAN_PRE_APPROVED)
+        elif product_progress.get("closed_by_user"):
+            completed.append(CompletedStep.LOAN_CLOSED_BY_USER)
+            
+        if product_progress.get("otp_validated"):
+            completed.append(CompletedStep.LOAN_OTP_SUCCESS)
+        elif state.get("auth_control", {}).get("security_blocked"):
+            completed.append(CompletedStep.LOAN_SECURITY_BLOCK)
+        # D. Formalización (Final del flujo)
+        if product_progress.get("contract_signed"):
+            completed.append("LOAN_FORMALIZATION_SUCCESS")
+    
     elif product == "ACCOUNT":
         if product_progress.get("profile_completed"):
             completed.append(CompletedStep.ACCOUNT_PROFILE)
@@ -191,7 +214,7 @@ def route_after_welcome(state: FluxState) -> str:
     if current_node in _RESUME_MAP:
         node_product = _infer_product_from_node(current_node)
         if node_product and node_product in _SUCCESS_MAP:
-            completed_steps = _get_completed_steps_for_product(progress, node_product)
+            completed_steps = _get_completed_steps_for_product(state, node_product)
             product_success_map = _SUCCESS_MAP[node_product]
             for step in reversed(completed_steps):  # El más reciente primero
                 if step in product_success_map:
