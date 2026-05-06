@@ -55,6 +55,10 @@ ELEGIBILIDAD = {
     "edad_min": 18,
     "renta_min": 500_000,
     "antiguedad_min_meses": 6,
+    "plazo_min": 6,   # <--- NUEVO
+    "plazo_max": 48,  # <--- NUEVO
+    "monto_min": 100_000,      # <--- NUEVO
+    "monto_max": 30_000_000,   # <--- NUEVO
 }
 
 SCORING_PONDERACIONES = {
@@ -190,6 +194,11 @@ class CreditEngine:
             raise PolicyRejectionError("ERR_RENTA")
         if self.antiguedad_meses < ELEGIBILIDAD["antiguedad_min_meses"]:
             raise PolicyRejectionError("ERR_ANTIGUEDAD")
+
+        if not (ELEGIBILIDAD["plazo_min"] <= self.plazo <= ELEGIBILIDAD["plazo_max"]):
+            raise PolicyRejectionError("ERR_PLAZO")
+        if not (ELEGIBILIDAD["monto_min"] <= self.monto_solicitado <= ELEGIBILIDAD["monto_max"]):
+            raise PolicyRejectionError("ERR_MONTO")
 
     def _calcular_scoring(self) -> int:
         """

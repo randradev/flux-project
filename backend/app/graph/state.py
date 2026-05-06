@@ -54,10 +54,10 @@ class LoanProgress(TypedDict, total=False):
     """Registro histórico de completitud del flujo de crédito."""
     profile_completed:    bool   # True cuando loan_profile tiene todos los campos
     simulation_completed: bool   # True cuando loan_sim tiene monto y plazo
-    risk_engine_completed: bool   # <--- AGREGAR
-    pre_approval_accepted: bool   # <--- AGREGAR
-    otp_validated:         bool   # <--- AGREGAR
-    contract_signed:       bool   # <--- AGREGAR (Para formalización)
+    risk_engine_completed: bool   # True cuando el motor de cálculo ya se ejecutó
+    pre_approval_accepted: bool   # True cuando el usuario acepta la oferta (tarjeta de transparencia)
+    otp_validated:         bool   # True cuando el OTP es verificado exitosamente
+    contract_signed:       bool   # True cuando el contrato fue firmado digitalmente
 
 class AccountProgress(TypedDict, total=False):
     """Registro histórico de completitud del flujo de cuenta corriente."""
@@ -187,7 +187,7 @@ class LoanEngineResult(TypedDict, total=False):
     cae: float                   # Carga Anual Equivalente (decimal)
     monto_aprobado: int          # Monto final aprobado por el banco
     plazo_aprobado: int          # Cuotas aprobadas
-    motivo_rechazo: str | None   # ERR_EDAD | ERR_RENTA | ERR_ANTIGUEDAD |
+    motivo_rechazo: str | None   # ERR_EDAD | ERR_RENTA | ERR_ANTIGUEDAD | ERR_PLAZO | ERR_MONTO |
                                  # ERR_SCORING | ERR_CAPACIDAD_PAGO | None
 
 

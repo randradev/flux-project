@@ -1516,43 +1516,68 @@ _REJECTION_MESSAGES = {
     "ERR_EDAD":           "lamentablemente necesitas ser mayor de 18 años para solicitar un crédito con nosotros",
     "ERR_RENTA":          "tu renta declarada está por debajo del mínimo que requerimos para este producto",
     "ERR_ANTIGUEDAD":     "necesitas al menos 6 meses de antigüedad laboral para calificar",
+    "ERR_PLAZO":          "el plazo que buscas está fuera de nuestro rango permitido (máximo 48 meses)",
+    "ERR_MONTO":          "el monto solicitado no se ajusta a nuestras políticas comerciales actuales",
     "ERR_SCORING":        "tu perfil de riesgo actual no cumple los requisitos de nuestra política de crédito",
-    "ERR_CAPACIDAD_PAGO": "la cuota mensual supera el 30% de tu renta, por lo que no podemos aprobar esta solicitud",
+    "ERR_CAPACIDAD_PAGO": "la cuota mensual supera el 30% de tu renta líquida",
 }
 
 def loan_rejected_policy_node(state: FluxState) -> dict:
     """
-    Stub: LOAN_REJECTED_POLICY.
-
-    Responsabilidades finales:
-      - Leer evaluation_results["loan_engine"]["motivo_rechazo"].
-      - Generar un mensaje de rechazo empático y personalizado.
-      - Escribir flow_result con status_code = "REJECTED".
-      - Poblar offer_data["loan"]["display_data"]["reason"].
+    Nodo de Rechazo por Política: Entrega la noticia con empatía vía LLM.
     """
-    session = state.get("session", {})
-    nombre  = state.get("preparation_data", {}).get("nombre", "")
-    engine  = state.get("evaluation_results", {}).get("loan_engine", {})
-    motivo  = engine.get("motivo_rechazo", "ERR_SCORING")
-
-    razon_legible = _REJECTION_MESSAGES.get(
-        motivo,
-        "tu solicitud no pudo ser aprobada en este momento"
+    print("--- NODO: LOAN_REJECTED_POLICY ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN ------
+    session   = state.get("session", {})
+    prep_data = state.get("preparation_data", {})
+    engine    = state.get("evaluation_results", {}).get("loan_engine", {})
+    
+    nombre    = prep_data.get("nombre", "Cliente").split()[0]
+    motivo    = engine.get("motivo_rechazo", "ERR_SCORING")
+    
+    # 2. ------ GENERACIÓN DE MENSAJE EMPÁTICO ------
+    razon_tecnica = _REJECTION_MESSAGES.get(motivo, "no cumplimos con los filtros mínimos de riesgo")
+    
+    # Identidad de marca mucho más definida
+    system_identity = (
+        "Eres Flux, un asistente bancario joven, optimista y directo. "
+        "Tu estilo es chileno coloquial pero profesional (usas palabras como 'pucha', 'fome', 'dale', 'buenazo'). "
+        "Eres breve, vas al grano y evitas sonar condescendiente o melancólico."
     )
-    mensaje = (
-        f"😔 {nombre}, revisamos tu información con cuidado y, "
-        f"{razon_legible}.\n\n"
-        "No te desanimes: puedes volver a intentarlo cuando tu situación cambie. "
-        "¡Acá vamos a estar!"
+    
+    instruction = (
+        f"Hola Flux. Cuéntale a {nombre} que su crédito NO pasó esta vez. "
+        f"La razón es: {razon_tecnica}. "
+        f"Sé súper breve (máximo 2 párrafos cortos). No pidas perdón ni suenes triste, "
+        f"dilo de forma optimista, como una pausa y no un rechazo eterno. "
+        f"¡Mantén la energía arriba!"
     )
+    
+    response = _flux_generator.invoke([
+        {"role": "system", "content": system_identity},
+        {"role": "user",   "content": instruction}
+    ])
+    mensaje_final = normalize_llm_response(response.content)
 
-    from langchain_core.messages import AIMessage
+
+    # 3. ------ PERSISTENCIA Y SEMÁFOROS ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="LOAN_REJECTED_POLICY",
+            node_status="SUCCESS", # El proceso de rechazo se ejecutó bien
+            engine_status="COMPLETED"
+        )
+
+    # 4. ------ SALIDA ------
     return {
         "session": {
             **session,
-            "current_node":      "LOAN_REJECTED_POLICY",
-            "previous_node":     session.get("current_node"),
-            "just_completed_step": None,
+            "current_node": "LOAN_REJECTED_POLICY",
+            "just_completed_step": None # Nodo terminal
         },
         "flow_result": {
             "status_code":  "REJECTED",
@@ -1561,18 +1586,17 @@ def loan_rejected_policy_node(state: FluxState) -> dict:
             "closed_at":    _dt.datetime.utcnow().isoformat(),
         },
         "offer_data": {
+            **state.get("offer_data", {}),
             "loan": {
+                **state.get("offer_data", {}).get("loan", {}),
                 "display_data": {
-                    "download_url":  None,
-                    "main_detail":   None,
-                    "security_hash": None,
-                    "reason":        motivo,
+                    "reason": razon_tecnica,
+                    "download_url": None
                 }
             }
         },
-        "messages": [AIMessage(content=mensaje)],
+        "messages": [AIMessage(content=mensaje_final)]
     }
-
 
 # ──────────────────────────────────────────────────────────────────────────────────────
 # LOAN_SECURITY_BLOCK — Bloqueo por Múltiples Intentos OTP Fallidos
