@@ -19,6 +19,8 @@ from app.graph.constants import CompletedStep
 from langchain_core.outputs import LLMResult
 from app.modules.consultant import get_consultant_response
 from app.modules import security
+from app.infra.supabase import update_application_semaphores, upload_contract_to_storage, block_user_security
+from app.modules.pdf_factory import PDFFactory
 
 # ======================================================================================================
 # LLM Y PROMPTS
@@ -29,6 +31,7 @@ from app.modules import security
 _profile_extractor = get_structured_model(LoanProfileExtraction)
 _sim_extractor     = get_structured_model(LoanSimExtraction)
 _flux_generator    = get_generation_model()  # NUEVO — Llamada B
+_pdf_factory = PDFFactory()
 
 # ───────────────────────────────────────────────────
 # ── SYSTEM PROMPTS (IDENTIDAD FLUX) ────────────────
@@ -1331,7 +1334,6 @@ def loan_formalization_node(state: FluxState) -> dict:
     
     # 2. ------ EJECUCIÓN (The Worker) ------
     try:
-        from app.modules.pdf_factory import PDFFactory
         factory = PDFFactory()
         
         # Construimos el payload alineado con los requerimientos de branding
@@ -1346,7 +1348,7 @@ def loan_formalization_node(state: FluxState) -> dict:
         }
         
         # A. Generación Local
-        local_path, security_hash = factory.create_pdf("CREDITO_CONSUMO", payload)
+        local_path, security_hash = _pdf_factory.create_pdf("CREDITO_CONSUMO", payload)
         
         # B. Subida a la Nube (Supabase Storage)
         cloud_url = upload_contract_to_storage(local_path)
@@ -1604,48 +1606,63 @@ def loan_rejected_policy_node(state: FluxState) -> dict:
 
 def loan_security_block_node(state: FluxState) -> dict:
     """
-    Stub: LOAN_SECURITY_BLOCK.
-
-    Responsabilidades finales:
-      - Registrar el bloqueo en auth_control con block_timestamp.
-      - Actualizar user_status en DB a "BLOCKED_SECURITY" (vía Supabase).
-      - Escribir flow_result con status_code = "SECURITY_BLOCKED".
-      - Este nodo es TERMINAL: no hay retorno al flujo de crédito.
+    Nodo Terminal: Bloqueo de seguridad tras 3 intentos fallidos de OTP.
     """
+    print("--- NODO: LOAN_SECURITY_BLOCK ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
     session      = state.get("session", {})
+    user_data    = state.get("user_data", {})
     auth_control = state.get("auth_control", {})
-    nombre       = state.get("preparation_data", {}).get("nombre", "")
+    nombre       = state.get("preparation_data", {}).get("nombre", "Cliente").split()[0]
+    user_id      = user_data.get("user_id")
     now_iso      = _dt.datetime.utcnow().isoformat()
-
+    
+    # 2. ------ EJECUCIÓN (The Warden) ------
+    # Bloqueo persistente en la DB (usando el nuevo helper)
+    if user_id:
+        block_user_security(user_id)
+        
     mensaje = (
-        f"🔒 {nombre}, hemos detectado múltiples intentos fallidos de validación. "
-        "Por tu seguridad, esta solicitud ha sido bloqueada temporalmente.\n\n"
-        "Recibirás un correo con instrucciones para desbloquear tu cuenta. "
-        "Si crees que esto es un error, contáctanos."
+        f"🔒 **{nombre}, lo sentimos mucho.**\n\n"
+        f"Hemos detectado múltiples intentos fallidos de validación de identidad. "
+        f"Por tu seguridad, **esta solicitud y tu acceso a Flux han sido bloqueados temporalmente**.\n\n"
+        f"Recibirás un correo electrónico en breve con los pasos necesarios para verificar tu cuenta "
+        f"y recuperar el acceso. Si crees que esto es un error, por favor contáctanos de inmediato."
     )
 
-    from langchain_core.messages import AIMessage
+    # 3. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="LOAN_SECURITY_BLOCK",
+            node_status="BLOCKED", # <--- Estado de semáforo específico
+            engine_status="FAILED"
+        )
+
+    # 4. ------ SALIDA TERMINAL (The End) ------
     return {
         "session": {
             **session,
-            "current_node":      "LOAN_SECURITY_BLOCK",
-            "previous_node":     session.get("current_node"),
-            "just_completed_step": None,
+            "current_node": "LOAN_SECURITY_BLOCK",
+            "just_completed_step": None # Flag terminal
         },
         "auth_control": {
             **auth_control,
             "security_blocked": True,
             "block_timestamp":  now_iso,
+            "error_detail": "Máximo de intentos OTP superado."
         },
         "flow_result": {
             "status_code":  "SECURITY_BLOCKED",
-            "close_reason": "MAX_OTP_ATTEMPTS",
+            "close_reason": "OTP_LIMIT_EXCEEDED",
             "product_name": "Crédito de Consumo",
             "closed_at":    now_iso,
         },
-        "messages": [AIMessage(content=mensaje)],
+        "messages": [AIMessage(content=mensaje)]
     }
-
 
 # ──────────────────────────────────────────────────────────────────────────────────────
 # LOAN_CLOSED_BY_USER — Cierre Voluntario (Usuario rechazó la oferta)

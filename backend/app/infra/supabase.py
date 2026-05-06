@@ -240,3 +240,15 @@ def upload_contract_to_storage(file_path: str, bucket_name: str = "contracts") -
         print(f"❌ Error subiendo archivo a Supabase Storage: {e}")
         return None
 
+def block_user_security(user_id: str) -> bool:
+    """
+    Bloquea a un usuario en la DB por razones de seguridad (ej. 3 intentos fallidos de OTP).
+    """
+    try:
+        supabase_admin.table("users").update({"user_status": "BLOCKED_SECURITY"}).eq("id", user_id).execute()
+        print(f"🔒 Usuario {user_id} marcado como BLOCKED_SECURITY en DB.")
+        return True
+    except Exception as e:
+        print(f"❌ Error intentando bloquear al usuario {user_id}: {e}")
+        return False
+
