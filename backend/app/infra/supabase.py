@@ -204,3 +204,51 @@ def update_application_semaphores(
         # Logueamos el error pero no rompemos el flujo del bot
         # Es preferible que el bot siga aunque el semáforo de la DB falle
         print(f"ERROR: No se pudieron actualizar los semáforos en DB: {e}")
+
+# ── Helpers de Storage (Archivos) ─────────────────────────────
+
+def upload_contract_to_storage(file_path: str, bucket_name: str = "contracts") -> str | None:
+    """
+    Sube un archivo PDF al storage de Supabase con un sufijo único para evitar errores de duplicidad.
+    """
+    import os
+    import time
+    try:
+        if not os.path.exists(file_path):
+            print(f"ERROR: Archivo no encontrado para subir: {file_path}")
+            return None
+
+        # 1. Generar nombre único usando el nombre base + timestamp
+        base_name = os.path.basename(file_path)
+        name, ext = os.path.splitext(base_name)
+        unique_name = f"{name}_{int(time.time())}{ext}" # Ejemplo: contrato_190541142_1714950000.pdf
+        
+        # 2. Subida en binario
+        with open(file_path, "rb") as f:
+            supabase_admin.storage.from_(bucket_name).upload(
+                path=unique_name,
+                file=f,
+                file_options={"content-type": "application/pdf"}
+            )
+            
+        # 3. Obtener URL pública
+        public_url = supabase_admin.storage.from_(bucket_name).get_public_url(unique_name)
+        print(f"✅ Archivo subido exitosamente a Supabase: {public_url}")
+        return public_url
+        
+    except Exception as e:
+        print(f"❌ Error subiendo archivo a Supabase Storage: {e}")
+        return None
+
+def block_user_security(user_id: str) -> bool:
+    """
+    Bloquea a un usuario en la DB por razones de seguridad (ej. 3 intentos fallidos de OTP).
+    """
+    try:
+        supabase_admin.table("users").update({"user_status": "BLOCKED_SECURITY"}).eq("id", user_id).execute()
+        print(f"🔒 Usuario {user_id} marcado como BLOCKED_SECURITY en DB.")
+        return True
+    except Exception as e:
+        print(f"❌ Error intentando bloquear al usuario {user_id}: {e}")
+        return False
+

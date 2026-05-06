@@ -42,6 +42,39 @@ class UserData(TypedDict, total=False):
     user_status: str      # ACTIVE | BLOCKED_SECURITY | PROSPECT
     user_category: str | None  # START | MEDIUM | ADVANCE | None
 
+# ══════════════════════════════════════════════════════════════
+# NAMESPACE B.1: ProgressData  [NUEVO en v2.2]
+# Historial de pasos completados por producto.
+# Escritura: nodos COLLECTING de cada producto (al completar un paso).
+# Lectura: edges.py → _SUCCESS_MAP para ruteo inter-turno.
+# Inmutable retroactivamente: una vez marcado True, nunca vuelve a False.
+# ══════════════════════════════════════════════════════════════
+
+class LoanProgress(TypedDict, total=False):
+    """Registro histórico de completitud del flujo de crédito."""
+    profile_completed:    bool   # True cuando loan_profile tiene todos los campos
+    simulation_completed: bool   # True cuando loan_sim tiene monto y plazo
+    risk_engine_completed: bool   # True cuando el motor de cálculo ya se ejecutó
+    pre_approval_accepted: bool   # True cuando el usuario acepta la oferta (tarjeta de transparencia)
+    otp_validated:         bool   # True cuando el OTP es verificado exitosamente
+    contract_signed:       bool   # True cuando el contrato fue firmado digitalmente
+
+class AccountProgress(TypedDict, total=False):
+    """Registro histórico de completitud del flujo de cuenta corriente."""
+    profile_completed: bool
+
+class DapProgress(TypedDict, total=False):
+    """Registro histórico de completitud del flujo de depósito a plazo."""
+    data_completed: bool
+
+class ProgressData(TypedDict, total=False):
+    """
+    Contenedor raíz de progreso histórico por producto.
+    Cada sub-cajón es independiente; un producto NUNCA toca el cajón de otro.
+    """
+    loan:    LoanProgress
+    account: AccountProgress
+    dap:     DapProgress
 
 # ══════════════════════════════════════════════════════════════
 # NAMESPACE B: session
@@ -58,6 +91,8 @@ class SessionData(TypedDict, total=False):
     current_node: str
     previous_node: str | None
     is_transversal_active: bool
+    progress: ProgressData          # Historial persistente de pasos completados
+    just_completed_step: str | None # Flag volátil (1 turno): qué hito acaba de ocurrir
 
 
 # ══════════════════════════════════════════════════════════════
@@ -152,7 +187,7 @@ class LoanEngineResult(TypedDict, total=False):
     cae: float                   # Carga Anual Equivalente (decimal)
     monto_aprobado: int          # Monto final aprobado por el banco
     plazo_aprobado: int          # Cuotas aprobadas
-    motivo_rechazo: str | None   # ERR_EDAD | ERR_RENTA | ERR_ANTIGUEDAD |
+    motivo_rechazo: str | None   # ERR_EDAD | ERR_RENTA | ERR_ANTIGUEDAD | ERR_PLAZO | ERR_MONTO |
                                  # ERR_SCORING | ERR_CAPACIDAD_PAGO | None
 
 
@@ -291,6 +326,49 @@ class AuthControl(TypedDict, total=False):
     error_detail: str | None     # Descripción técnica para logging
 
 # ══════════════════════════════════════════════════════════════
+# NAMESPACE J: transparency_data  [NUEVO en v2.1]
+# Datos curados para la "Tarjeta de Transparencia" de cada producto.
+# Escritura: Nodos PRE_APPROVED de cada producto.
+# ══════════════════════════════════════════════════════════════
+
+class LoanTransparency(TypedDict, total=False):
+    """Atributos de visualización para Crédito de Consumo."""
+    monto_aprobado: str
+    plazo_aprobado: str
+    tasa_interes_mensual: str
+    cuota_mensual: str
+    ctc: str
+    total_intereses: str
+    cae: str
+    nivel_riesgo: str
+
+class AccountTransparency(TypedDict, total=False):
+    """Atributos de visualización para Cuenta Corriente."""
+    final_category: str
+    has_upgrade: str
+    credit_line_amount: str
+    monthly_cost: str
+
+class DapTransparency(TypedDict, total=False):
+    """Atributos de visualización para Depósito a Plazo."""
+    monto: str
+    moneda: str
+    estimated_gain: str
+    total_return: str
+    period_rate: str
+    conversion_rate_used: str
+    ipc_applied: str
+
+class TransparencyData(TypedDict, total=False):
+    """
+    Contenedor raíz para la visualización intermedia de ofertas.
+    """
+    loan: LoanTransparency
+    account: AccountTransparency
+    dap: DapTransparency
+
+
+# ══════════════════════════════════════════════════════════════
 # RAÍZ: FluxState
 # ══════════════════════════════════════════════════════════════
 
@@ -344,6 +422,9 @@ class FluxState(TypedDict):
 
     # ── Control de Autenticación y Seguridad ──────────────────────
     auth_control: AuthControl
+
+    # ── Datos para Tarjeta de Transparencia ───────────────────────
+    transparency_data: TransparencyData
 
     # ── Resultado final del flujo (solo usado al terminar) ─────────
     flow_result: FlowResult

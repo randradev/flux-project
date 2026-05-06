@@ -17,7 +17,48 @@ from app.graph.state import FluxState
 from app.infra.supabase import get_user_by_email, update_conversation_node
 from app.infra.gemini_client import get_chat_model
 from app.infra.supabase import update_application_semaphores
+from app.graph.nodes.schemas.common_schemas import IntentExtractionSchema
+from app.infra.gemini_client import get_structured_model
 
+# ======================================================================================================
+# LLM Y PROMPTS
+# ======================================================================================================
+
+# ── CONFIGURACIÓN DE INTELIGENCIA (SINGLETONS) ──────────────
+# Singletons de modelos (se instancian una vez al importar el módulo)
+_intent_extractor = get_structured_model(IntentExtractionSchema)
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPT DE RECONOCIMIENTO DE INTENCIÓN (INTENT_ROUTER_NODE) ───────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+# ── PROMPT LLAMADA A: EXTRACCIÓN ────────────────────────────────────────────
+# Directivo y sin ambigüedad. Temperatura 0.0 hace el trabajo pesado;
+# el prompt solo establece el contrato de qué retornar.
+
+_INTENT_SYSTEM_PROMPT = """
+Eres el clasificador de intenciones de FLUX, un sistema bancario conversacional.
+Analiza el mensaje del usuario y clasifica su intención en UNA categoría exacta.
+
+CATEGORÍAS:
+  LOAN    — Crédito, préstamo, financiamiento, plata prestada.
+  ACCOUNT — Cuenta corriente, cuenta bancaria, abrir cuenta.
+  DAP     — Depósito a plazo, inversión, ahorrar con intereses, DAP.
+  GENERAL — Saludo, pregunta general, duda o mensaje fuera de las categorías anteriores.
+
+REGLA DE ORO: Retorna JSON con los campos razonamiento, intencion y confianza.
+
+EJEMPLOS:
+  "Quiero un crédito de 5 millones" → LOAN, ALTA
+  "Necesito abrir una cuenta"       → ACCOUNT, ALTA
+  "¿Puedo invertir mi sueldo?"      → DAP, MEDIA
+  "¿Qué es el CAE?"                 → GENERAL, ALTA
+  "hola"                            → GENERAL, ALTA
+"""
+
+# ======================================================================================================
+# HELPERS
+# ======================================================================================================
 
 def _calculate_age(birth_date_str: str) -> int:
     """
@@ -33,6 +74,9 @@ def _calculate_age(birth_date_str: str) -> int:
         (today.month, today.day) < (birth.month, birth.day)
     )
 
+# ======================================================================================================
+# NODOS TRANSVERSALES
+# ======================================================================================================
 
 def welcome_node(state: FluxState) -> dict:
     """
@@ -46,7 +90,7 @@ def welcome_node(state: FluxState) -> dict:
     PROCESO:
         1. Detecta si es sesión nueva o reanudada.
         2. Calcula edad a partir de birth_date (centralizado aquí para toda la app).
-        3. Genera mensaje de bienvenida personalizado.
+        3. Genera mensaje de bienvenida personalizado dependiendo del modo de operación.
         4. Actualiza GPS en Supabase.
         5. Escribe preparation_data con datos procesados.
 
@@ -54,11 +98,24 @@ def welcome_node(state: FluxState) -> dict:
         - messages: Agrega mensaje de bienvenida.
         - session["current_node"]: "WELCOME_NODE".
         - preparation_data: {nombre, rut, mail, edad}.
+
+    VERSIÓN 2.1 — Nodo de Hidratación Silenciosa.
+
+    MODOS DE OPERACIÓN:
+      A) Silencioso: cuando product_intent ya existe O hay mensajes previos.
+         → Solo hidrata preparation_data y actualiza GPS. Sin AIMessage.
+      B) Bienvenida: cuando es sesión completamente nueva (sin intención ni historial).
+         → Emite mensaje de bienvenida con los productos disponibles.
+
+    REGLA DE ORO: Este nodo NUNCA sobreescribe current_node si ya hay
+    un proceso activo (ver _RESUME_MAP en edges.py). Su current_node
+    propio ("WELCOME_NODE") sólo se escribe en Modo Bienvenida.
     """
     user = state.get("user_data", {})
     session = state.get("session", {})
     messages = state.get("messages", [])
 
+    # ── Datos universales (siempre se calculan) ───────────────
     full_name = user.get("full_name", "")
     first_name = full_name.split()[0] if full_name else "amig@"
 
@@ -66,76 +123,72 @@ def welcome_node(state: FluxState) -> dict:
     birth_date_str = user.get("birth_date")
     edad = _calculate_age(birth_date_str) if birth_date_str else 0
 
-    # Detectar si es sesión nueva o reanudada
-    is_resumed = len(messages) > 0 and session.get("previous_node") is not None
+    preparation_data = {
+        "nombre": full_name,
+        "rut": user.get("rut", ""),
+        "mail": user.get("email", ""),
+        "edad": edad,
+    }
 
-    if is_resumed:
-        welcome_text = (
-            f"¡Hola de nuevo, {first_name}! 👋 Veo que nos habíamos quedado a mitad del camino. "
-            f"No te preocupes, tu progreso está guardado. ¿Continuamos donde lo dejamos?"
-        )
+    # ── Detección de modo ─────────────────────────────────────
+    product_intent = session.get("product_intent")
+    has_history = len(messages) > 0
+    is_silent_mode = (product_intent is not None) or has_history
+
+    # ── Actualizar GPS en Supabase (siempre) ─────────────────
+    conversation_id = session.get("conversation_id")
+    application_id = session.get("application_id")
+
+    if is_silent_mode:
+        # MODO SILENCIOSO: hidrata datos, no toca current_node del proceso activo
+        if conversation_id:
+            # No sobreescribir: informar a Supabase que welcome pasó pero no es el nodo activo
+            pass  # El nodo activo real se actualizará en su propio nodo
+        if application_id:
+            update_application_semaphores(
+                application_id,
+                current_node_id="WELCOME_NODE",
+                node_status="SUCCESS",   # No "BYPASSED" hasta validar el enum en la DB
+                engine_status="PENDING"
+            )
+        # Retornar sin messages: sólo preparation_data se escribe
+        return {
+            "preparation_data": preparation_data,
+            # session NO se modifica: current_node del proceso activo se preserva
+        }
+
     else:
+        # MODO BIENVENIDA: sesión nueva, sin intención, sin historial
         welcome_text = (
             f"¡Hola, {first_name}! 👋 Soy Flux, tu asistente financiero. "
             f"Estoy aquí para ayudarte a solicitar un **Crédito de Consumo**, "
             f"abrir una **Cuenta Corriente**, o contratar un **Depósito a Plazo**. "
             f"¿Con qué te puedo ayudar hoy?"
         )
-
-    # Actualizar GPS en la DB
-    conversation_id = session.get("conversation_id")
-    if conversation_id:
-        update_conversation_node(conversation_id, "WELCOME_NODE")
-
-    # ── Actualizar semáforo del inicio ──
-    application_id = session.get("application_id")
-    if application_id:
-        update_application_semaphores(
-            application_id,
-            current_node_id="WELCOME_NODE",
-            node_status="SUCCESS",
-            engine_status="PENDING"
-        )
-
-    return {
+        if conversation_id:
+            update_conversation_node(conversation_id, "WELCOME_NODE")
+        if application_id:
+            update_application_semaphores(
+                application_id,
+                current_node_id="WELCOME_NODE",
+                node_status="SUCCESS",
+                engine_status="PENDING"
+            )
+        return {
         "messages": [AIMessage(content=welcome_text)],
-        "session": {**session, "current_node": "WELCOME_NODE"},
-        # ── NUEVO en v2.0: preparation_data ──────────────────────
-        "preparation_data": {
-            "nombre": full_name,
-            "rut": user.get("rut", ""),
-            "mail": user.get("email", ""),
-            "edad": edad,
+        "session": {
+            **session,
+            "current_node": "WELCOME_NODE",
+            "progress": session.get("progress", {}),          # ← Inicializar si no existe
+            "just_completed_step": None,                       # ← Siempre limpio al inicio
         },
+        "preparation_data": preparation_data,
     }
 
-
 # ── INTENT_ROUTER_NODE ────────────────────────────────────────
-
-_INTENT_SYSTEM_PROMPT = """
-Eres el clasificador de intenciones de FLUX, un sistema bancario conversacional.
-Tu única función es analizar el mensaje del usuario y clasificar su intención
-en UNA de las siguientes categorías exactas. Responde SOLO con la categoría, sin explicaciones.
-
-CATEGORÍAS:
-- LOAN: El usuario quiere solicitar un crédito, préstamo, financiamiento o dinero prestado.
-- ACCOUNT: El usuario quiere abrir una cuenta corriente o cuenta bancaria.
-- DAP: El usuario quiere invertir, hacer un depósito a plazo, ahorrar con intereses o un DAP.
-- GENERAL: El usuario tiene una pregunta general, duda, saludo, o algo que no encaja en las categorías anteriores.
-
-EJEMPLOS:
-"Quiero un crédito de 5 millones" → LOAN
-"Necesito abrir una cuenta" → ACCOUNT
-"¿Puedo invertir mi sueldo?" → DAP
-"¿Cómo funciona esto?" → GENERAL
-"hola" → GENERAL
-"¿Qué es el CAE?" → GENERAL
-"""
-
-
 def intent_router_node(state: FluxState) -> dict:
     """
-    Nodo clasificador de la intención inicial del usuario.
+    VERSIÓN 2.1 — Clasificador con extracción estructurada (Llamada Tipo A).
 
     INPUT (State):
         - state["messages"]: Último mensaje del usuario.
@@ -144,8 +197,10 @@ def intent_router_node(state: FluxState) -> dict:
     PROCESO:
         1. Extrae el último mensaje del usuario del historial.
         2. Envía el mensaje al LLM con el prompt de clasificación.
-        3. Parsea la respuesta para obtener el código de intención (LOAN, ACCOUNT, DAP, GENERAL).
-        4. Actualiza el product_intent en el estado.
+        3. Usa _intent_extractor (LLM.with_structured_output(IntentExtractionSchema))
+        en lugar de text completion con parsing manual.
+        4. Registra confianza en session para futuros umbrales.
+        5. Actualiza el product_intent en el estado.
 
     OUTPUT (campos del State que modifica):
         - session["product_intent"]: Código de intención detectada.
@@ -157,40 +212,33 @@ def intent_router_node(state: FluxState) -> dict:
     session = state.get("session", {})
 
     # Obtener el último mensaje del usuario
-    last_user_message = ""
-    for msg in reversed(messages):
-        if hasattr(msg, "type") and msg.type == "human":
-            last_user_message = msg.content
-            break
+    last_user_message = next(
+        (m.content for m in reversed(messages) if hasattr(m, "type") and m.type == "human"),
+        ""
+    )
 
     if not last_user_message:
-        # Si no hay mensaje del usuario, asumir intención GENERAL
-        intent = "GENERAL"
-    else:
-        model = get_chat_model()
-        classification_messages = [
-            SystemMessage(content=_INTENT_SYSTEM_PROMPT),
-            HumanMessage(content=last_user_message),
-        ]
-        response = model.invoke(classification_messages)
-        content = response.content
-        
-        # Manejo robusto: Gemini a veces retorna una lista de bloques
-        if isinstance(content, list):
-            content = " ".join([c if isinstance(c, str) else str(c.get("text", "")) for c in content])
-        
-        raw_intent = content.strip().upper()
+        return {
+            "session": {
+                **session,
+                "product_intent": "GENERAL",
+                "current_node": "INTENT_ROUTER",
+            }
+        }
 
-        # Validar que la respuesta es una categoría válida
-        valid_intents = {"LOAN", "ACCOUNT", "DAP", "GENERAL"}
-        intent = raw_intent if raw_intent in valid_intents else "GENERAL"
+    # Extracción con LLM estructurado
+    extracted: IntentExtractionSchema = _intent_extractor.invoke([
+        {"role": "system", "content": _INTENT_SYSTEM_PROMPT},
+        {"role": "user",   "content": last_user_message},
+    ]) or IntentExtractionSchema(intencion="GENERAL", razonamiento="Error en extracción")
 
 
     return {
         "session": {
             **session,
-            "product_intent": intent,
-            "current_node": "INTENT_ROUTER",
+            "product_intent": extracted.intencion,
+            "current_node":   "INTENT_ROUTER",
+            # confianza se puede guardar en session para logging si se agrega a SessionData
         }
     }
 

@@ -29,88 +29,66 @@ from app.config import settings
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
 os.environ["GOOGLE_CLOUD_PROJECT"] = settings.google_cloud_project_id
 
-
-# ── Inicialización Regional (Embeddings) ─────────────────────
-def _init_regional():
-    """
-    Inicializa Vertex AI apuntando a la región us-central1.
-    Necesario para acceder al modelo de embeddings.
-    """
-    vertexai.init(
-        project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,
-    )
-
-
-# ── Inicialización Global (Chat / Extracción) ────────────────
-def _init_global():
-    """
-    Inicializa Vertex AI con el endpoint global de aiplatform.
-    El modelo gemini-3-flash-preview requiere este endpoint específico.
-    """
-    vertexai.init(
-        project=settings.google_cloud_project_id,
-        location="us-central1",
-        api_endpoint="aiplatform.googleapis.com"
-    )
-
-
-
 # ── Modelos ───────────────────────────────────────────────────
 
 def get_chat_model() -> ChatVertexAI:
     """
     Retorna el modelo de chat para los nodos conversacionales del grafo.
-
-    INPUT:  Ninguno.
-    PROCESO: Inicializa el brazo global y retorna ChatVertexAI con el modelo flash.
-    OUTPUT: Instancia de ChatVertexAI lista para invocación.
-
-    Uso en nodos: `model = get_chat_model(); response = model.invoke(messages)`
+    Usa configuración explícita para evitar conflictos con el RAG.
     """
-    _init_global()
     return ChatVertexAI(
         model_name="gemini-3-flash-preview",
         project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,  # Restauramos la referencia lógica
-        api_endpoint="aiplatform.googleapis.com", # <--- OBLIGATORIO para evitar el 404
-        temperature=0.3,   # Baja para respuestas más deterministas en extracción
+        location="us-central1",
+        api_endpoint="aiplatform.googleapis.com", # <--- OBLIGATORIO
+        temperature=0.3,
         max_output_tokens=2048,
     )
 
 
 def get_structured_model(schema) -> ChatVertexAI:
     """
-    Retorna el modelo de chat con salida estructurada (for entity extraction).
-
-    INPUT:  schema — Pydantic BaseModel o TypedDict que define la estructura esperada.
-    PROCESO: Usa with_structured_output para que el LLM devuelva JSON validado.
-    OUTPUT: Modelo con structured output configurado.
-
-    Uso en nodos de recolección: `model = get_structured_model(RentaSchema)`
+    Llamada A — Extractor de entidades financieras.
+    Usa el endpoint global de forma explícita para evitar conflictos con embeddings.
     """
-    _init_global()
-    base_model = ChatVertexAI(
+    return ChatVertexAI(
         model_name="gemini-3-flash-preview",
         project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,  # Restauramos la referencia lógica
-        api_endpoint="aiplatform.googleapis.com", # <--- OBLIGATORIO para evitar el 404
-        temperature=0.1,  # Mínima temperatura para extracción precisa
-    )
-    return base_model.with_structured_output(schema)
+        location="us-central1",
+        api_endpoint="aiplatform.googleapis.com", # <--- Forzamos el endpoint correcto aquí
+        temperature=0,
+    ).with_structured_output(schema)
 
+def get_generation_model() -> ChatVertexAI:
+    """
+    Llamada B — Generador de respuestas naturales (Persona Flux).
+    """
+    return ChatVertexAI(
+        model_name="gemini-3-flash-preview",
+        project=settings.google_cloud_project_id,
+        location="us-central1",
+        api_endpoint="aiplatform.googleapis.com", # <--- Forzamos el endpoint correcto aquí
+        temperature=0.2,
+        max_output_tokens=2048,
+    )
 
 def get_embeddings_model() -> VertexAIEmbeddings:
     """
-    Retorna el modelo de embeddings para el sistema RAG.
-
-    INPUT:  Ninguno.
-    PROCESO: Inicializa el brazo regional y retorna VertexAIEmbeddings.
-    OUTPUT: Instancia de VertexAIEmbeddings lista para generar vectores.
+    Retorna el modelo de embeddings para el sistema RAG de forma aislada.
     """
-    _init_regional()
+    # Mantenemos tu hack de SafetySettingsType por compatibilidad de versiones
+    from langchain_google_vertexai import embeddings as v_embeddings
+    if not hasattr(v_embeddings, "SafetySettingsType"):
+        from typing import Any
+        setattr(v_embeddings, "SafetySettingsType", Any)
+    
+    try:
+        VertexAIEmbeddings.model_rebuild()
+    except Exception:
+        pass
+
     return VertexAIEmbeddings(
         model_name="text-embedding-004",
         project=settings.google_cloud_project_id,
-        location=settings.google_cloud_location,
+        location=settings.google_cloud_location, # <--- Usará el endpoint regional por defecto
     )

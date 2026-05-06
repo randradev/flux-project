@@ -1,5 +1,7 @@
 # DATOS REQUERIDOS POR ESTADO PARA CRÉDITO DE CONSUMO
 
+**IMPORTANTE:** Nota de Implementación (Fase 1 - Supervivencia): La lógica transversal descrita en este documento se manejará de forma simplificada dentro de cada nodo o se omitirá temporalmente para asegurar el ruteo del Happy Path. Los desvíos a RAG y Seguridad quedan en backlog.
+
 ## I. FLUJO DE PREPARACIÓN Y DATOS
 
 ### 1. LOAN_INIT
