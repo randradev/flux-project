@@ -1,5 +1,6 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Brand from './Brand';
+import CreditWidgets from './widgets/CreditWidgets';
 
 function formatMessageTime(value) {
   if (!value) {
@@ -16,8 +17,11 @@ export default function ChatPanel({
   apiBaseUrl,
   conversation,
   loadingMessages,
+  onAcceptLoanOffer,
   onLogout,
+  onRejectLoanOffer,
   onSendMessage,
+  onSubmitOtp,
   sending,
   user
 }) {
@@ -30,7 +34,7 @@ export default function ChatPanel({
     }
 
     windowRef.current.scrollTop = windowRef.current.scrollHeight;
-  }, [conversation?.messages?.length, sending]);
+  }, [conversation?.messages?.length, conversation?.currentNode, sending]);
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -63,6 +67,9 @@ export default function ChatPanel({
         <span className="status-chip muted">
           {conversation?.isDraft ? 'Draft local' : conversation?.id || 'Sin conversation_id'}
         </span>
+        {conversation?.applicationId && (
+          <span className="status-chip muted">{conversation.applicationId}</span>
+        )}
       </div>
 
       <div ref={windowRef} className="chat-window" aria-live="polite">
@@ -87,11 +94,19 @@ export default function ChatPanel({
             <div className="message-bubble">
               <p>{item.content}</p>
               <small>
-                {item.role} {item.nodeAtTime ? `· ${item.nodeAtTime}` : ''} {formatMessageTime(item.createdAt)}
+                {item.role} {item.nodeAtTime ? `- ${item.nodeAtTime}` : ''} {formatMessageTime(item.createdAt)}
               </small>
             </div>
           </article>
         ))}
+
+        <CreditWidgets
+          conversation={conversation}
+          disabled={sending}
+          onAcceptOffer={onAcceptLoanOffer}
+          onRejectOffer={onRejectLoanOffer}
+          onSubmitOtp={onSubmitOtp}
+        />
       </div>
 
       <form className="composer" onSubmit={handleSubmit}>
