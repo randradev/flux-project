@@ -80,6 +80,7 @@ export async function streamChat({
   accessToken,
   message,
   conversationId,
+  productIntent, // <--- 1. Asegúrate que reciba el parámetro
   signal,
   onOpen,
   onEvent
@@ -93,7 +94,8 @@ export async function streamChat({
     },
     body: JSON.stringify({
       message,
-      conversation_id: conversationId ?? null
+      conversation_id: conversationId ?? null,
+      product_intent: productIntent, // <--- 2. Y que lo envíe al backend
     })
   });
 

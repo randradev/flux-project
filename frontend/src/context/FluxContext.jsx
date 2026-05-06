@@ -8,18 +8,22 @@ import {
 } from '../services/api';
 import { getProductFromNode, getProductLabel, normalizeNodeId } from '../constants/flux';
 
-const DRAFT_ID = '__draft__';
+export const DRAFT_ID = '__draft__';
 
 export const FluxContext = createContext(null);
 
 function createRuntimeState() {
   return {
     applicationId: null,
-    nodeStatus: null,
+    nodeStatus: null,         // "PROCESSING" | "SUCCESS" | "ERROR"
     engineStatus: null,
     documentStatus: null,
+    friendlyLabel: null,      // NUEVO: etiqueta legible del nodo actual
+    progressPercent: null,    // NUEVO: porcentaje de progreso (0-100)
     evaluationResults: {},
     riskResults: null,
+    transparencyData: {},     // NUEVO: namespace transparency_data del backend
+    collectingData: {},       // NUEVO: namespace collecting_data del backend
     offerData: {},
     authControl: {},
     flowResult: null
@@ -123,6 +127,28 @@ function readNodeFromPayload(payload) {
   );
 }
 
+function readTransparencyData(payload) {
+  // El backend emite transparency_data como namespace de primer nivel
+  return payload.transparency_data ?? payload.transparencyData ?? null;
+}
+
+function readCollectingData(payload) {
+  return payload.collecting_data ?? payload.collectingData ?? null;
+}
+
+function readFriendlyLabel(payload) {
+  return payload.friendly_label ?? payload.friendlyLabel ?? null;
+}
+
+function readProgressPercent(payload) {
+  const val = payload.progress_percent ?? payload.progressPercent ?? null;
+  return val !== null ? Number(val) : null;
+}
+
+function readNodeStatus(payload) {
+  return payload.node_status ?? payload.nodeStatus ?? null;
+}
+
 function readEvaluationResults(payload) {
   const direct = payload.evaluation_results ?? payload.evaluationResults ?? null;
 
@@ -196,7 +222,10 @@ function hasStatePayload(payload) {
       payload.auth_control ||
       payload.authControl ||
       payload.flow_result ||
-      payload.flowResult
+      payload.flowResult ||
+      // NUEVOS:
+      payload.transparency_data || payload.transparencyData ||
+      payload.collecting_data || payload.collectingData
   );
 }
 
@@ -368,6 +397,13 @@ export function FluxProvider({ accessToken, children }) {
       const nextFlowResult = payload.flow_result ?? payload.flowResult ?? null;
       const productTitle = nextProductIntent ? getProductLabel(nextProductIntent) : conversation.title;
 
+      // ── Nuevas lecturas (Fase 2) ──
+      const nextTransparencyData = readTransparencyData(payload);
+      const nextCollectingData = readCollectingData(payload);
+      const nextFriendlyLabel = readFriendlyLabel(payload);
+      const nextProgressPercent = readProgressPercent(payload);
+      const nextNodeStatus = readNodeStatus(payload);
+
       return {
         ...conversation,
         applicationId:
@@ -403,7 +439,12 @@ export function FluxProvider({ accessToken, children }) {
         productIntent: nextProductIntent,
         title: conversation.productName || productTitle,
         nodeSource: 'stream',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        // ── Nuevos campos (Fase 2) ──
+        transparencyData: mergeObjectPayload(conversation.transparencyData, nextTransparencyData),
+        collectingData: mergeObjectPayload(conversation.collectingData, nextCollectingData),
+        friendlyLabel: nextFriendlyLabel ?? conversation.friendlyLabel,
+        progressPercent: nextProgressPercent ?? conversation.progressPercent,
       };
     };
 
@@ -431,7 +472,7 @@ export function FluxProvider({ accessToken, children }) {
     setConversations((current) => appendMessageToConversation(current, conversationId, message));
   }
 
-  async function sendMessage(text) {
+  async function sendMessage(text, productIntent = null) {
     const cleanText = text.trim();
 
     if (!cleanText || !accessToken || sending) {
@@ -456,6 +497,7 @@ export function FluxProvider({ accessToken, children }) {
         accessToken,
         message: cleanText,
         conversationId: activeConversationId === DRAFT_ID ? null : activeConversationId,
+        productIntent: productIntent,
         onOpen: ({ conversationId }) => {
           if (activeConversationId === DRAFT_ID && conversationId) {
             activeConversationId = conversationId;
@@ -523,11 +565,14 @@ export function FluxProvider({ accessToken, children }) {
       ? draftConversation
       : conversations.find((item) => item.id === selectedConversationId) ?? draftConversation;
 
+  const isEngineRunning = selectedConversation?.nodeStatus === 'PROCESSING';
+
   const value = {
     apiBaseUrl,
     appError,
     clearAppError: () => setAppError(''),
     conversations,
+    DRAFT_ID,
     hasApiConfig,
     loadingHistory,
     loadingMessages,
@@ -540,7 +585,8 @@ export function FluxProvider({ accessToken, children }) {
     sendMessage,
     sendOtpCode,
     sending,
-    startDraftConversation
+    startDraftConversation,
+    isEngineRunning,  // NUEVO: true cuando un nodo ENGINE está corriendo
   };
 
   return <FluxContext.Provider value={value}>{children}</FluxContext.Provider>;

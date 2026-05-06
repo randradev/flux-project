@@ -119,6 +119,7 @@ class ChatRequest(BaseModel):
     """Cuerpo del request POST /chat."""
     message: str                    # Texto del usuario
     conversation_id: str | None = None  # None = nueva conversación; UUID = reanudar
+    product_intent: str | None = None   # <--- AGREGAR ESTO (Opcional: LOAN, ACCOUNT, DAP)
 
 
 class ChatMetadata(BaseModel):
@@ -134,6 +135,7 @@ async def stream_graph_response(
     user_message: str,
     user_profile: dict,
     thread_id: str,
+    product_intent: str | None = None, # <--- AGREGAR ESTO
 ):
     """
     Generador asíncrono que ejecuta el grafo y emite eventos SSE.
@@ -157,10 +159,14 @@ async def stream_graph_response(
         content=user_message,
     )
 
-    # Estado inicial actualizado para FluxState v2.0 (Alineado con Riesgo 4 del Plan)
+# 1. Empezamos solo con el mensaje (Esto SIEMPRE se envía)
     initial_state = {
         "messages": [HumanMessage(content=user_message)],
-        "user_data": {
+    }
+    # 2. SOLO si hay una intención (vienes del Modal), inicializamos el resto.
+    # Si no hay product_intent, LangGraph recuperará TODO de la base de datos automáticamente.
+    if product_intent:
+        initial_state["user_data"] = {
             "user_id": str(user_profile.get("id", "")),
             "full_name": user_profile.get("full_name", ""),
             "email": user_profile.get("email", ""),
@@ -168,25 +174,20 @@ async def stream_graph_response(
             "birth_date": str(user_profile.get("birth_date", "")),
             "user_status": user_profile.get("user_statuses", {}).get("code", "ACTIVE"),
             "user_category": user_profile.get("user_categories", {}).get("code") if user_profile.get("user_categories") else None,
-        },
-        "session": {
+        }
+        initial_state["session"] = {
             "conversation_id": thread_id,
+            "product_intent": product_intent,
             "current_node": "START",
-            "product_intent": None,
             "is_transversal_active": False,
-        },
-        # Namespaces v2.0: inicializar vacíos para que LangGraph los gestione
-        "collecting_data": {},
-        "evaluation_results": {},
-        "offer_data": {},
-        "auth_control": {
-            "security_blocked": False,
-            "service_error": False,
-            "otp_attempts": 0,
-        },
-        "transparency_data": {},
-        "flow_result": None,
-    }
+        }
+        # Inicializamos los cajones de datos solo al empezar
+        initial_state["collecting_data"] = {}
+        initial_state["evaluation_results"] = {}
+        initial_state["offer_data"] = {}
+        initial_state["auth_control"] = {"security_blocked": False, "otp_attempts": 0}
+        initial_state["transparency_data"] = {}
+        initial_state["flow_result"] = None
     # NOTA: Se eliminaron "collected_data" y "control_flags" de la v1.0
 
     full_assistant_response = ""
@@ -290,6 +291,7 @@ async def chat_endpoint(
             user_message=request.message,
             user_profile=user_profile,
             thread_id=thread_id,
+            product_intent=request.product_intent,
         ),
         media_type="text/event-stream",
         headers={

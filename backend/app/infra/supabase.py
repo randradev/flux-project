@@ -49,7 +49,8 @@ def get_user_by_email(email: str) -> dict | None:
         .maybe_single()
         .execute()
     )
-    return response.data
+    return response.data if response else None
+
 
 
 def get_user_by_id(user_id: str) -> dict | None:
