@@ -1670,33 +1670,66 @@ def loan_security_block_node(state: FluxState) -> dict:
 
 def loan_closed_by_user_node(state: FluxState) -> dict:
     """
-    Stub: LOAN_CLOSED_BY_USER.
-
-    Responsabilidades finales:
-      - Leer el último estado alcanzado (previous_node) para analytics.
-      - Leer evaluation_results["loan_engine"] para capturar monto y cuota rechazados.
-      - Escribir flow_result con status_code = "CLOSED_BY_USER".
-      - Mensaje empático de despedida.
+    Nodo Terminal: El usuario rechaza formalmente la oferta de crédito.
     """
-    session = state.get("session", {})
-    nombre  = state.get("preparation_data", {}).get("nombre", "")
-    engine  = state.get("evaluation_results", {}).get("loan_engine", {})
-    monto   = engine.get("monto_aprobado", 0)
-    cuota   = engine.get("cuota_mensual", 0)
-    now_iso = _dt.datetime.utcnow().isoformat()
+    print("--- NODO: LOAN_CLOSED_BY_USER ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    session      = state.get("session", {})
+    prep_data    = state.get("preparation_data", {})
+    engine       = state.get("evaluation_results", {}).get("loan_engine", {})
+    offer_loan   = state.get("offer_data", {}).get("loan", {})
+    
+    nombre       = prep_data.get("nombre", "Cliente").split()[0]
+    monto        = engine.get("monto_aprobado", 0)
+    now_iso      = _dt.datetime.utcnow().isoformat()
 
-    mensaje = (
-        f"Entendido, {nombre}. Si en algún momento cambias de opinión, "
-        "¡acá vamos a estar para ayudarte! 👋"
+    # 2. ------ GENERACIÓN DE MENSAJE (The Farewell) ------
+    # Usamos LLM para una despedida personalizada y cálida (Toque Flux)
+    system_identity = (
+        "Eres Flux, un asistente bancario joven, optimista y directo. "
+        "Tu estilo es chileno coloquial pero profesional ('dale', 'buenazo', 'no te preocupes')."
     )
+    
+    instruction = (
+        f"Hola Flux. El usuario {nombre} acaba de rechazar nuestra oferta de crédito de ${monto:,} CLP. "
+        f"Despídete de forma muy breve (máximo 2 líneas), dile que no hay drama "
+        f"y que aquí estarás cuando lo necesite. Sé buena onda y relajado."
+    )
+    
+    response = _flux_generator.invoke([
+        {"role": "system", "content": system_identity},
+        {"role": "user",   "content": instruction}
+    ])
+    mensaje_final = normalize_llm_response(response.content)
 
-    from langchain_core.messages import AIMessage
+    # 3. ------ PERSISTENCIA HISTÓRICA (The Progress Tracker) ------
+    current_progress = session.get("progress", {})
+    loan_progress = current_progress.get("loan", {})
+    updated_progress = {
+        **current_progress,
+        "loan": {**loan_progress, "user_rejected_offer": True}
+    }
+
+    # 4. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="LOAN_CLOSED_BY_USER",
+            node_status="REJECTED_BY_USER",
+            engine_status="SUCCESS"
+        )
+
+    # 5. ------ SALIDA (The Final State) ------
     return {
         "session": {
             **session,
-            "current_node":      "LOAN_CLOSED_BY_USER",
-            "previous_node":     session.get("current_node"),
-            "just_completed_step": None,
+            "current_node": "LOAN_CLOSED_BY_USER",
+            "previous_node": session.get("current_node"),
+            "progress": updated_progress,
+            "just_completed_step": None # Flag terminal
         },
         "flow_result": {
             "status_code":  "CLOSED_BY_USER",
@@ -1705,16 +1738,18 @@ def loan_closed_by_user_node(state: FluxState) -> dict:
             "closed_at":    now_iso,
         },
         "offer_data": {
+            **state.get("offer_data", {}),
             "loan": {
+                **offer_loan,
                 "display_data": {
-                    "download_url":  None,
-                    "main_detail":   f"Monto rechazado: ${monto:,} CLP",
-                    "security_hash": None,
-                    "reason":        "USER_REJECTED_OFFER",
+                    **offer_loan.get("display_data", {}),
+                    "reason": "USER_REJECTED_OFFER",
+                    "main_detail": f"Monto rechazado: ${monto:,} CLP",
+                    "download_url": None
                 }
             }
         },
-        "messages": [AIMessage(content=mensaje)],
+        "messages": [AIMessage(content=mensaje_final)]
     }
 
 # ======================================================================================================
