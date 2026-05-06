@@ -6,11 +6,25 @@ import {
   streamChat,
   apiBaseUrl
 } from '../services/api';
-import { getProductLabel } from '../constants/flux';
+import { getProductFromNode, getProductLabel, normalizeNodeId } from '../constants/flux';
 
 const DRAFT_ID = '__draft__';
 
 export const FluxContext = createContext(null);
+
+function createRuntimeState() {
+  return {
+    applicationId: null,
+    nodeStatus: null,
+    engineStatus: null,
+    documentStatus: null,
+    evaluationResults: {},
+    riskResults: null,
+    offerData: {},
+    authControl: {},
+    flowResult: null
+  };
+}
 
 function createDraftConversation() {
   return {
@@ -24,7 +38,8 @@ function createDraftConversation() {
     messages: [],
     detailLoaded: true,
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    ...createRuntimeState()
   };
 }
 
@@ -41,19 +56,23 @@ function formatConversationTitle(item) {
 }
 
 function mapHistoryItem(item) {
+  const currentNode = normalizeNodeId(item.current_node_id ?? item.current_node ?? item.currentStep ?? null);
+  const productIntent = getProductFromNode(currentNode, item.product_types?.code ?? null);
+
   return {
     id: item.id,
     isDraft: false,
     title: formatConversationTitle(item),
     productName: item.product_types?.name ?? '',
-    productIntent: null,
-    currentNode: item.current_node ?? null,
+    productIntent,
+    currentNode,
     nodeSource: 'history',
     isActive: item.is_active ?? true,
     messages: [],
     detailLoaded: false,
     createdAt: item.created_at ?? null,
-    updatedAt: item.updated_at ?? item.created_at ?? null
+    updatedAt: item.updated_at ?? item.created_at ?? null,
+    ...createRuntimeState()
   };
 }
 
@@ -80,6 +99,105 @@ function appendMessageToConversation(conversations, conversationId, message) {
       updatedAt: new Date().toISOString()
     };
   });
+}
+
+function readApplicationPayload(payload) {
+  return payload.application ?? payload.financial_application ?? payload.financialApplication ?? {};
+}
+
+function readNodeFromPayload(payload) {
+  const application = readApplicationPayload(payload);
+  return normalizeNodeId(
+    payload.current_node_id ??
+      payload.currentNodeId ??
+      payload.current_node ??
+      payload.currentNode ??
+      payload.current_step ??
+      payload.currentStep ??
+      payload.node ??
+      application.current_node_id ??
+      application.currentNodeId ??
+      application.current_node ??
+      application.currentNode ??
+      null
+  );
+}
+
+function readEvaluationResults(payload) {
+  const direct = payload.evaluation_results ?? payload.evaluationResults ?? null;
+
+  if (direct) {
+    return direct;
+  }
+
+  const loanEngine =
+    payload.loan_engine ??
+    payload.loanEngine ??
+    payload.risk_results ??
+    payload.riskResults ??
+    payload.risk_result ??
+    payload.riskResult ??
+    null;
+
+  return loanEngine ? { loan_engine: loanEngine } : null;
+}
+
+function readLoanRiskResults(payload, evaluationResults, currentRiskResults) {
+  return (
+    payload.risk_results ??
+    payload.riskResults ??
+    payload.loan_engine ??
+    payload.loanEngine ??
+    evaluationResults?.loan_engine ??
+    evaluationResults?.loanEngine ??
+    currentRiskResults
+  );
+}
+
+function readOfferData(payload) {
+  const direct = payload.offer_data ?? payload.offerData ?? null;
+  const loanOffer = payload.loan_offer ?? payload.loanOffer ?? payload.offer ?? null;
+
+  if (direct) {
+    return direct;
+  }
+
+  return loanOffer ? { loan: loanOffer } : null;
+}
+
+function mergeObjectPayload(current, next) {
+  if (!next || typeof next !== 'object') {
+    return current;
+  }
+
+  return {
+    ...(current ?? {}),
+    ...next
+  };
+}
+
+function hasStatePayload(payload) {
+  return Boolean(
+    readNodeFromPayload(payload) ||
+      payload.application_id ||
+      payload.applicationId ||
+      payload.node_status ||
+      payload.nodeStatus ||
+      payload.engine_status ||
+      payload.engineStatus ||
+      payload.document_status ||
+      payload.documentStatus ||
+      payload.evaluation_results ||
+      payload.evaluationResults ||
+      payload.risk_results ||
+      payload.riskResults ||
+      payload.offer_data ||
+      payload.offerData ||
+      payload.auth_control ||
+      payload.authControl ||
+      payload.flow_result ||
+      payload.flowResult
+  );
 }
 
 export function FluxProvider({ accessToken, children }) {
@@ -230,15 +348,64 @@ export function FluxProvider({ accessToken, children }) {
     setSelectedConversationId(conversationId);
   }
 
-  function updateConversationNode(conversationId, payload) {
-    const updater = (conversation) => ({
-      ...conversation,
-      currentNode: payload.node ?? conversation.currentNode,
-      productIntent: payload.product_intent ?? conversation.productIntent,
-      title: getProductLabel(payload.product_intent, conversation.productName || conversation.title),
-      nodeSource: 'stream',
-      updatedAt: new Date().toISOString()
-    });
+  function updateConversationFromPayload(conversationId, payload) {
+    const updater = (conversation) => {
+      const application = readApplicationPayload(payload);
+      const nextNode = readNodeFromPayload(payload);
+      const nextProductIntent =
+        payload.product_intent ??
+        payload.productIntent ??
+        application.product_intent ??
+        application.productIntent ??
+        getProductFromNode(nextNode, conversation.productIntent);
+      const nextEvaluationResults = readEvaluationResults(payload);
+      const mergedEvaluationResults = mergeObjectPayload(
+        conversation.evaluationResults,
+        nextEvaluationResults
+      );
+      const nextOfferData = readOfferData(payload);
+      const nextAuthControl = payload.auth_control ?? payload.authControl ?? null;
+      const nextFlowResult = payload.flow_result ?? payload.flowResult ?? null;
+      const productTitle = nextProductIntent ? getProductLabel(nextProductIntent) : conversation.title;
+
+      return {
+        ...conversation,
+        applicationId:
+          payload.application_id ??
+          payload.applicationId ??
+          application.id ??
+          application.application_id ??
+          conversation.applicationId,
+        currentNode: nextNode ?? conversation.currentNode,
+        nodeStatus:
+          payload.node_status ??
+          payload.nodeStatus ??
+          application.node_status ??
+          application.nodeStatus ??
+          conversation.nodeStatus,
+        engineStatus:
+          payload.engine_status ??
+          payload.engineStatus ??
+          application.engine_status ??
+          application.engineStatus ??
+          conversation.engineStatus,
+        documentStatus:
+          payload.document_status ??
+          payload.documentStatus ??
+          application.document_status ??
+          application.documentStatus ??
+          conversation.documentStatus,
+        evaluationResults: mergedEvaluationResults,
+        riskResults: readLoanRiskResults(payload, nextEvaluationResults, conversation.riskResults),
+        offerData: mergeObjectPayload(conversation.offerData, nextOfferData),
+        authControl: mergeObjectPayload(conversation.authControl, nextAuthControl),
+        flowResult: nextFlowResult ?? conversation.flowResult,
+        productIntent: nextProductIntent,
+        title: conversation.productName || productTitle,
+        nodeSource: 'stream',
+        updatedAt: new Date().toISOString()
+      };
+    };
 
     if (conversationId === DRAFT_ID) {
       setDraftConversation((current) => updater(current));
@@ -304,13 +471,13 @@ export function FluxProvider({ accessToken, children }) {
               role: 'assistant',
               content: event.content ?? '',
               createdAt: new Date().toISOString(),
-              nodeAtTime: event.node ?? null
+              nodeAtTime: normalizeNodeId(event.node) ?? null
             });
           }
 
-          if (event.type === 'node_transition') {
+          if (event.type === 'node_transition' || hasStatePayload(event)) {
             const targetConversationId = activeConversationId || DRAFT_ID;
-            updateConversationNode(targetConversationId, event);
+            updateConversationFromPayload(targetConversationId, event);
           }
 
           if (event.type === 'done' && event.conversation_id) {
@@ -339,6 +506,18 @@ export function FluxProvider({ accessToken, children }) {
     }
   }
 
+  function sendLoanOfferAccepted() {
+    return sendMessage('ACEPTAR_OFERTA_CREDITO');
+  }
+
+  function sendLoanOfferRejected() {
+    return sendMessage('RECHAZAR_OFERTA_CREDITO');
+  }
+
+  function sendOtpCode(code) {
+    return sendMessage(String(code ?? '').trim());
+  }
+
   const selectedConversation =
     selectedConversationId === DRAFT_ID
       ? draftConversation
@@ -356,7 +535,10 @@ export function FluxProvider({ accessToken, children }) {
     selectedConversation,
     selectedConversationId,
     selectConversation,
+    sendLoanOfferAccepted,
+    sendLoanOfferRejected,
     sendMessage,
+    sendOtpCode,
     sending,
     startDraftConversation
   };

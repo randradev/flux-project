@@ -12,6 +12,26 @@ export const PRODUCT_ICONS = {
   GENERAL: 'FL'
 };
 
+export const NODE_ALIASES = {
+  welcome: 'WELCOME_NODE',
+  intent_router: 'INTENT_ROUTER',
+  loan_entry: 'LOAN_ENTRY_STUB',
+  account_entry: 'ACCOUNT_ENTRY_STUB',
+  dap_entry: 'DAP_ENTRY_STUB',
+  general_response: 'GENERAL_RESPONSE',
+  loan_init: 'LOAN_INIT',
+  loan_collecting_profile: 'LOAN_COLLECTING_PROFILE',
+  loan_collecting_simulation: 'LOAN_COLLECTING_SIMULATION',
+  loan_risk_engine: 'LOAN_RISK_ENGINE',
+  loan_pre_approved: 'LOAN_PRE_APPROVED',
+  loan_otp_validation: 'LOAN_OTP_VALIDATION',
+  loan_formalization: 'LOAN_FORMALIZATION',
+  loan_completed: 'LOAN_COMPLETED',
+  loan_rejected_policy: 'LOAN_REJECTED_POLICY',
+  loan_security_block: 'LOAN_SECURITY_BLOCK',
+  loan_closed_by_user: 'LOAN_CLOSED_BY_USER'
+};
+
 export const NODE_DETAILS = {
   WELCOME_NODE: {
     label: 'Recepcion',
@@ -36,6 +56,50 @@ export const NODE_DETAILS = {
   GENERAL_RESPONSE: {
     label: 'Respuesta general',
     description: 'El backend respondio fuera de un flujo especifico.'
+  },
+  LOAN_INIT: {
+    label: 'Inicio credito',
+    description: 'FLUX abre la solicitud de Credito de Consumo y prepara el perfil.'
+  },
+  LOAN_COLLECTING_PROFILE: {
+    label: 'Perfil financiero',
+    description: 'Se recopila renta, antiguedad laboral y nivel de estudios.'
+  },
+  LOAN_COLLECTING_SIMULATION: {
+    label: 'Simulacion',
+    description: 'Se define monto solicitado y plazo del credito.'
+  },
+  LOAN_RISK_ENGINE: {
+    label: 'Motor de riesgo',
+    description: 'El backend evalua scoring, tasa, cuota, CAE y capacidad de pago.'
+  },
+  LOAN_PRE_APPROVED: {
+    label: 'Oferta transparente',
+    description: 'El usuario revisa las condiciones y decide si acepta continuar.'
+  },
+  LOAN_OTP_VALIDATION: {
+    label: 'Validacion OTP',
+    description: 'FLUX confirma identidad mediante codigo de 6 digitos.'
+  },
+  LOAN_FORMALIZATION: {
+    label: 'Formalizacion',
+    description: 'El backend prepara el contrato y sello de integridad.'
+  },
+  LOAN_COMPLETED: {
+    label: 'Credito completado',
+    description: 'La solicitud fue finalizada correctamente.'
+  },
+  LOAN_REJECTED_POLICY: {
+    label: 'Solicitud rechazada',
+    description: 'La evaluacion no cumple una politica financiera.'
+  },
+  LOAN_SECURITY_BLOCK: {
+    label: 'Bloqueo de seguridad',
+    description: 'La solicitud fue bloqueada por intentos OTP fallidos.'
+  },
+  LOAN_CLOSED_BY_USER: {
+    label: 'Cierre voluntario',
+    description: 'El usuario decidio no continuar con la oferta.'
   }
 };
 
@@ -57,6 +121,67 @@ export const PHASE_ONE_STEPS = [
   }
 ];
 
+export const PRODUCT_STEPS = {
+  GENERAL: PHASE_ONE_STEPS,
+  LOAN: [
+    {
+      id: 'LOAN_INIT',
+      label: 'Inicio',
+      description: 'Creacion de la solicitud.'
+    },
+    {
+      id: 'LOAN_COLLECTING_PROFILE',
+      label: 'Perfil',
+      description: 'Renta, antiguedad y estudios.'
+    },
+    {
+      id: 'LOAN_COLLECTING_SIMULATION',
+      label: 'Simulacion',
+      description: 'Monto y plazo.'
+    },
+    {
+      id: 'LOAN_RISK_ENGINE',
+      label: 'Evaluacion',
+      description: 'Scoring, tasa y cuota.'
+    },
+    {
+      id: 'LOAN_PRE_APPROVED',
+      label: 'Oferta',
+      description: 'Revision y decision.'
+    },
+    {
+      id: 'LOAN_OTP_VALIDATION',
+      label: 'OTP',
+      description: 'Validacion de identidad.'
+    },
+    {
+      id: 'LOAN_FORMALIZATION',
+      label: 'Contrato',
+      description: 'Formalizacion digital.'
+    },
+    {
+      id: 'LOAN_COMPLETED',
+      label: 'Completado',
+      description: 'Cierre exitoso.'
+    },
+    {
+      id: 'LOAN_REJECTED_POLICY',
+      label: 'Rechazo',
+      description: 'Cierre por politica.'
+    },
+    {
+      id: 'LOAN_SECURITY_BLOCK',
+      label: 'Bloqueo',
+      description: 'Cierre por seguridad.'
+    },
+    {
+      id: 'LOAN_CLOSED_BY_USER',
+      label: 'Cerrado',
+      description: 'Cierre voluntario.'
+    }
+  ]
+};
+
 const FINAL_NODE_IDS = new Set([
   'LOAN_ENTRY_STUB',
   'ACCOUNT_ENTRY_STUB',
@@ -64,8 +189,25 @@ const FINAL_NODE_IDS = new Set([
   'GENERAL_RESPONSE'
 ]);
 
-export function getNodeMeta(nodeId) {
+const LOAN_TERMINAL_NODES = new Set([
+  'LOAN_COMPLETED',
+  'LOAN_REJECTED_POLICY',
+  'LOAN_SECURITY_BLOCK',
+  'LOAN_CLOSED_BY_USER'
+]);
+
+export function normalizeNodeId(nodeId) {
   if (!nodeId) {
+    return null;
+  }
+
+  return NODE_ALIASES[nodeId] ?? NODE_ALIASES[String(nodeId).toLowerCase()] ?? nodeId;
+}
+
+export function getNodeMeta(nodeId) {
+  const normalizedNodeId = normalizeNodeId(nodeId);
+
+  if (!normalizedNodeId) {
     return {
       label: 'Sin nodo recibido',
       description: 'Aun no se recibe estado del backend para esta conversacion.'
@@ -73,8 +215,8 @@ export function getNodeMeta(nodeId) {
   }
 
   return (
-    NODE_DETAILS[nodeId] ?? {
-      label: nodeId,
+    NODE_DETAILS[normalizedNodeId] ?? {
+      label: normalizedNodeId,
       description: 'Nodo no mapeado en el frontend.'
     }
   );
@@ -110,20 +252,66 @@ export function getProductIcon(productIntent, productName = '') {
   return PRODUCT_ICONS.GENERAL;
 }
 
+export function getProductFromNode(nodeId, fallbackProduct = null) {
+  const normalizedNodeId = normalizeNodeId(nodeId);
+
+  if (normalizedNodeId?.startsWith('LOAN_')) {
+    return 'LOAN';
+  }
+
+  if (normalizedNodeId?.startsWith('ACCOUNT_')) {
+    return 'ACCOUNT';
+  }
+
+  if (normalizedNodeId?.startsWith('DAP_')) {
+    return 'DAP';
+  }
+
+  return fallbackProduct ?? 'GENERAL';
+}
+
+export function getStepsForConversation(conversation) {
+  const product = getProductFromNode(conversation?.currentNode, conversation?.productIntent);
+  return PRODUCT_STEPS[product] ?? PRODUCT_STEPS.GENERAL;
+}
+
 export function getPhaseStepIndex(currentNode) {
-  if (!currentNode || currentNode === 'WELCOME_NODE') {
+  const normalizedNodeId = normalizeNodeId(currentNode);
+
+  if (!normalizedNodeId || normalizedNodeId === 'WELCOME_NODE') {
     return 0;
   }
 
-  if (currentNode === 'INTENT_ROUTER') {
+  if (normalizedNodeId === 'INTENT_ROUTER') {
     return 1;
   }
 
-  if (FINAL_NODE_IDS.has(currentNode)) {
+  if (FINAL_NODE_IDS.has(normalizedNodeId)) {
     return 2;
   }
 
+  if (normalizedNodeId.startsWith('LOAN_')) {
+    const loanIndex = PRODUCT_STEPS.LOAN.findIndex((step) => step.id === normalizedNodeId);
+    return loanIndex >= 0 ? loanIndex : 0;
+  }
+
   return 0;
+}
+
+export function getMilestoneState(stepId, currentNode, index, steps) {
+  const normalizedNodeId = normalizeNodeId(currentNode);
+  const currentStepIndex = getPhaseStepIndex(normalizedNodeId);
+
+  if (normalizedNodeId === stepId) {
+    return LOAN_TERMINAL_NODES.has(stepId) ? 'terminal' : 'active';
+  }
+
+  if (normalizedNodeId && LOAN_TERMINAL_NODES.has(normalizedNodeId)) {
+    const terminalIndex = steps.findIndex((step) => step.id === normalizedNodeId);
+    return index < terminalIndex ? 'complete' : 'waiting';
+  }
+
+  return index < currentStepIndex ? 'complete' : 'waiting';
 }
 
 export function getFlowResultLabel(currentNode) {
