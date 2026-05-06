@@ -417,10 +417,16 @@ code {
 }
 
 .milestones li.complete .milestone-dot,
-.milestones li.active .milestone-dot {
+.milestones li.active .milestone-dot,
+.milestones li.terminal .milestone-dot {
   border-color: transparent;
   background: var(--mint);
   box-shadow: 0 0 0 5px rgba(28, 155, 108, 0.14);
+}
+
+.milestones li.terminal .milestone-dot {
+  background: var(--amber);
+  box-shadow: 0 0 0 5px rgba(199, 123, 26, 0.14);
 }
 
 .milestones strong {
@@ -593,6 +599,129 @@ code {
   min-width: 140px;
 }
 
+.dynamic-widgets {
+  display: grid;
+  gap: 14px;
+  align-self: stretch;
+}
+
+.loan-widget {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(15, 125, 233, 0.16);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(13, 27, 42, 0.08);
+}
+
+.widget-head {
+  display: grid;
+  gap: 6px;
+}
+
+.widget-head strong {
+  color: var(--navy);
+  font-size: 1.18rem;
+}
+
+.widget-head p,
+.widget-hint {
+  margin: 0;
+  color: var(--slate);
+  line-height: 1.45;
+}
+
+.widget-hint {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f2f7fb;
+  border: 1px dashed var(--line);
+}
+
+.offer-grid,
+.closure-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.offer-grid div,
+.closure-grid div {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: #f4f8fb;
+}
+
+.offer-grid dt,
+.closure-grid dt {
+  margin: 0 0 4px;
+  color: var(--slate);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.offer-grid dd,
+.closure-grid dd {
+  margin: 0;
+  color: var(--navy);
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.widget-actions,
+.otp-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.danger-button {
+  border-color: rgba(159, 63, 63, 0.28);
+  color: var(--rose);
+}
+
+.otp-form input {
+  width: min(180px, 100%);
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--navy);
+  font-size: 1.4rem;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-align: center;
+  outline: none;
+}
+
+.otp-form input:focus {
+  border-color: var(--sky);
+  box-shadow: 0 0 0 3px rgba(15, 125, 233, 0.15);
+}
+
+.closure-widget.success {
+  border-color: rgba(28, 155, 108, 0.28);
+}
+
+.closure-widget.warning {
+  border-color: rgba(199, 123, 26, 0.28);
+}
+
+.closure-widget.danger {
+  border-color: rgba(159, 63, 63, 0.28);
+}
+
+.danger-text {
+  color: var(--rose);
+  border-color: rgba(159, 63, 63, 0.22);
+  background: rgba(159, 63, 63, 0.08);
+}
+
 @media (max-width: 1080px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -642,5 +771,18 @@ code {
 
   .composer-button {
     min-width: 0;
+  }
+
+  .offer-grid,
+  .closure-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .otp-form {
+    display: grid;
+  }
+
+  .otp-form input {
+    width: 100%;
   }
 }

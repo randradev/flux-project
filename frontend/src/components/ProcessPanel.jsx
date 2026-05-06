@@ -1,29 +1,33 @@
-﻿import React from 'react';
+import React from 'react';
 import {
   getFlowResultLabel,
+  getMilestoneState,
   getNodeMeta,
-  getPhaseStepIndex,
   getProductLabel,
-  PHASE_ONE_STEPS
+  getStepsForConversation
 } from '../constants/flux';
 
 export default function ProcessPanel({ conversation }) {
   const currentNode = conversation?.currentNode ?? null;
-  const currentStepIndex = getPhaseStepIndex(currentNode);
   const nodeMeta = getNodeMeta(currentNode);
   const productLabel = getProductLabel(conversation?.productIntent, conversation?.productName);
+  const steps = getStepsForConversation(conversation);
+  const phaseLabel =
+    conversation?.productIntent === 'LOAN' || currentNode?.startsWith('LOAN_')
+      ? 'Fase 2 Dev 2'
+      : 'Fase 1 Dev 2';
 
   return (
     <aside className="process-panel">
       <div className="panel-block">
         <div className="panel-title-row">
           <span>Flux Progress Monitor</span>
-          <small>Fase 1 Dev 2</small>
+          <small>{phaseLabel}</small>
         </div>
 
         <ol className="milestones">
-          {PHASE_ONE_STEPS.map((step, index) => {
-            const state = index < currentStepIndex ? 'complete' : index === currentStepIndex ? 'active' : 'waiting';
+          {steps.map((step, index) => {
+            const state = getMilestoneState(step.id, currentNode, index, steps);
             const description =
               step.id === 'FLOW_RESULT' && currentNode ? getFlowResultLabel(currentNode) : step.description;
 
@@ -51,11 +55,18 @@ export default function ProcessPanel({ conversation }) {
         <article className="status-card">
           <span className="status-label">Producto detectado</span>
           <strong>{productLabel}</strong>
-          <p>
-            En Fase 1 el backend solo llega a stubs. El frontend muestra el estado real sin
-            inventar ofertas ni OTP.
-          </p>
+          <p>El frontend refleja el estado recibido desde el backend y no calcula reglas de negocio.</p>
           <code>{conversation?.productIntent || 'GENERAL'}</code>
+        </article>
+
+        <article className="status-card">
+          <span className="status-label">Semaforos</span>
+          <strong>{conversation?.nodeStatus || 'Sin node_status'}</strong>
+          <p>
+            Motor: {conversation?.engineStatus || 'sin dato'} | Documento:{' '}
+            {conversation?.documentStatus || 'sin dato'}
+          </p>
+          <code>{conversation?.applicationId || 'sin application_id'}</code>
         </article>
 
         <article className="status-card">

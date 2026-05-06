@@ -20,7 +20,10 @@ export default function Dashboard() {
     selectedConversation,
     selectedConversationId,
     selectConversation,
+    sendLoanOfferAccepted,
+    sendLoanOfferRejected,
     sendMessage,
+    sendOtpCode,
     sending,
     startDraftConversation
   } = useFlux();
@@ -62,8 +65,11 @@ export default function Dashboard() {
           apiBaseUrl={apiBaseUrl}
           conversation={selectedConversation}
           loadingMessages={loadingMessages}
+          onAcceptLoanOffer={sendLoanOfferAccepted}
           onLogout={signOut}
+          onRejectLoanOffer={sendLoanOfferRejected}
           onSendMessage={sendMessage}
+          onSubmitOtp={sendOtpCode}
           sending={sending}
           user={user}
         />
