@@ -27,6 +27,91 @@ from app.infra.supabase import save_message, update_conversation_node
 
 router = APIRouter()
 
+# ── Integrar friendly_label y progress_percent desde flux.js ───────────────────────────────
+
+# Espejo del NODE_DETAILS de flux.js. Fuente de verdad para etiquetas en el stream.
+_NODE_LABELS: dict[str, dict] = {
+    "WELCOME_NODE":               {"label": "Recepcion",          "progress": 0},
+    "INTENT_ROUTER":              {"label": "Clasificacion",       "progress": 5},
+    "GENERAL_RESPONSE":           {"label": "Respuesta general",   "progress": 100},
+    "LOAN_INIT":                  {"label": "Inicio credito",      "progress": 10},
+    "LOAN_COLLECTING_PROFILE":    {"label": "Perfil financiero",   "progress": 20},
+    "LOAN_COLLECTING_SIMULATION": {"label": "Simulacion",          "progress": 35},
+    "LOAN_RISK_ENGINE":           {"label": "Motor de riesgo",     "progress": 55},
+    "LOAN_PRE_APPROVED":          {"label": "Oferta transparente", "progress": 65},
+    "LOAN_OTP_VALIDATION":        {"label": "Validacion OTP",      "progress": 80},
+    "LOAN_FORMALIZATION":         {"label": "Formalizacion",       "progress": 90},
+    "LOAN_COMPLETED":             {"label": "Credito completado",  "progress": 100},
+    "LOAN_REJECTED_POLICY":       {"label": "Solicitud rechazada", "progress": 100},
+    "LOAN_SECURITY_BLOCK":        {"label": "Bloqueo seguridad",   "progress": 100},
+    "LOAN_CLOSED_BY_USER":        {"label": "Cierre voluntario",   "progress": 100},
+    # Agregar ACCOUNT_* y DAP_* cuando sus flujos estén listos
+}
+
+def enrich_payload_with_labels(payload: dict) -> dict:
+    """Agrega friendly_label y progress_percent al payload usando _NODE_LABELS."""
+    node = payload.get("node", "")
+    meta = _NODE_LABELS.get(node, {})
+    payload["friendly_label"] = meta.get("label", node)
+    payload["progress_percent"] = meta.get("progress", None)
+    return payload
+
+# Lista de nodos cuya entrada debe pre-anunciar un estado PROCESSING
+_ENGINE_NODES = {
+    "LOAN_RISK_ENGINE",
+    "ACCOUNT_EVALUATION_ENGINE",
+    "DAP_INVESTMENT_ENGINE",
+    "LOAN_FORMALIZATION",
+}
+
+# ── Extractor dinámico de namespaces ───────────────────────────────
+
+# Namespaces del FluxState que el Frontend necesita consumir.
+# Para agregar soporte a un nuevo namespace, solo añadir su key aquí.
+_STATE_NAMESPACES = [
+    "transparency_data",
+    "collecting_data",
+    "evaluation_results",
+    "offer_data",
+    "auth_control",
+    "flow_result",
+]
+
+def build_node_transition_payload(
+    node_name: str,
+    node_output: dict,
+) -> dict | None:
+    """
+    Construye el payload de un evento node_transition a partir del output
+    de un nodo de LangGraph.
+
+    Retorna None si no hay datos de sesión relevantes para emitir.
+    Solo incluye en el payload los namespaces que el nodo realmente modificó
+    (i.e., que están presentes como keys en node_output con valor no None).
+    """
+    session = node_output.get("session", {})
+    current_node = session.get("current_node")
+
+    if not current_node:
+        return None
+
+    payload = {
+        "type": "node_transition",
+        "node": current_node,
+        "node_status": "SUCCESS",  # Extendible: ERROR, PROCESSING
+        "product_intent": session.get("product_intent"),
+        "application_id": session.get("application_id"),
+        "friendly_label": None,    # Ver Paso 1.2
+        "progress_percent": None,  # Ver Paso 1.2
+    }
+
+    # Inyección dinámica de namespaces: solo los que el nodo escribió
+    for namespace_key in _STATE_NAMESPACES:
+        value = node_output.get(namespace_key)
+        if value is not None:
+            payload[namespace_key] = value
+
+    return payload
 
 # ── Modelos de Request/Response ───────────────────────────────
 
@@ -72,7 +157,7 @@ async def stream_graph_response(
         content=user_message,
     )
 
-    # Estado inicial para el grafo
+    # Estado inicial actualizado para FluxState v2.0 (Alineado con Riesgo 4 del Plan)
     initial_state = {
         "messages": [HumanMessage(content=user_message)],
         "user_data": {
@@ -87,16 +172,22 @@ async def stream_graph_response(
         "session": {
             "conversation_id": thread_id,
             "current_node": "START",
+            "product_intent": None,
             "is_transversal_active": False,
         },
-        "collected_data": {},
-        "control_flags": {
+        # Namespaces v2.0: inicializar vacíos para que LangGraph los gestione
+        "collecting_data": {},
+        "evaluation_results": {},
+        "offer_data": {},
+        "auth_control": {
             "security_blocked": False,
             "service_error": False,
             "otp_attempts": 0,
-            "error_detail": None,
         },
+        "transparency_data": {},
+        "flow_result": None,
     }
+    # NOTA: Se eliminaron "collected_data" y "control_flags" de la v1.0
 
     full_assistant_response = ""
     last_node = "START"
@@ -125,24 +216,39 @@ async def stream_graph_response(
                         })
                         yield f"data: {sse_data}\n\n"
 
-                # Emitir metadato de transición de nodo (para el Progress Monitor del FE)
-                session_update = node_output.get("session", {})
-                if session_update.get("current_node"):
-                    meta_data = json.dumps({
-                        "type": "node_transition",
-                        "node": session_update["current_node"],
-                        "product_intent": session_update.get("product_intent"),
-                    })
-                    yield f"data: {meta_data}\n\n"
+                # Emitir metadato de transición de nodo (para el Progress Monitor del FE) con namespaces completos
+                                # ── 2. Emitir transición de nodo con namespaces completos (Paso 1.3 y 1.4) ──
+                transition_payload = build_node_transition_payload(node_name, node_output)
+                
+                if transition_payload:
+                    # Enriquecer con labels y progreso antes de emitir cualquier cosa
+                    transition_payload = enrich_payload_with_labels(transition_payload)
+                    
+                    # A. Si es un nodo ENGINE, pre-anunciar estado PROCESSING
+                    if transition_payload.get("node") in _ENGINE_NODES:
+                        processing_event = {
+                            "type": "node_transition",
+                            "node": transition_payload["node"],
+                            "node_status": "PROCESSING",
+                            "product_intent": transition_payload.get("product_intent"),
+                            "friendly_label": transition_payload.get("friendly_label"),
+                            "progress_percent": transition_payload.get("progress_percent"),
+                        }
+                        yield f"data: {json.dumps(processing_event)}\n\n"
+                    
+                    # B. Emitir siempre el evento SUCCESS final con los namespaces
+                    yield f"data: {json.dumps(transition_payload)}\n\n"
 
-        # Persistir respuesta del asistente en la DB
-        if full_assistant_response:
-            save_message(
-                conversation_id=thread_id,
-                role="assistant",
-                content=full_assistant_response,
-                node_at_time=last_node,
-            )
+                    # El evento SUCCESS con los namespaces se emite al finalizar el nodo (lógica anterior)
+                    
+                # Persistir respuesta del asistente en la DB
+                if full_assistant_response:
+                    save_message(
+                        conversation_id=thread_id,
+                        role="assistant",
+                        content=full_assistant_response,
+                        node_at_time=last_node,
+                    )
 
         # Señal de fin del stream
         yield f"data: {json.dumps({'type': 'done', 'conversation_id': thread_id})}\n\n"
