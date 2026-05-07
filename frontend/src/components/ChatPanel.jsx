@@ -68,7 +68,7 @@ export default function ChatPanel({
         </button>
       </header>
 
-      <div className="chat-status-row">
+{/*       <div className="chat-status-row">
         <span className="status-chip">{sending ? 'Streaming SSE activo' : 'Listo para enviar'}</span>
         <span className="status-chip muted">
           {conversation?.isDraft ? 'Draft local' : conversation?.id || 'Sin conversation_id'}
@@ -76,7 +76,7 @@ export default function ChatPanel({
         {conversation?.applicationId && (
           <span className="status-chip muted">{conversation.applicationId}</span>
         )}
-      </div>
+      </div> */}
 
       <div ref={windowRef} className="chat-window" aria-live="polite">
         {!conversation?.messages?.length && (
@@ -95,7 +95,7 @@ export default function ChatPanel({
             <div className="message-bubble">
               <p>{item.content}</p>
               <small>
-                {item.role} {item.nodeAtTime ? `- ${item.nodeAtTime}` : ''} {formatMessageTime(item.createdAt)}
+                {item.role === 'user' ? 'Tú' : 'Asistente Flux'} {' | '} {formatMessageTime(item.createdAt)}
               </small>
             </div>
           </article>
