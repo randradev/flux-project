@@ -33,6 +33,7 @@ export default function Dashboard() {
     !hasSupabaseConfig && 'Falta configurar Supabase Auth.',
     !hasApiConfig && 'Falta configurar la URL base del backend.'
   ].filter(Boolean);
+ 
 
   return (
     <main className="app-shell">
@@ -47,12 +48,12 @@ export default function Dashboard() {
 
       <ProcessPanel conversation={selectedConversation} />
 
-      <section className="workspace-panel">
-        {!!missingConfigLines.length && (
+       <section className="workspace-panel">
+{/*          {!!missingConfigLines.length && (
           <ConfigNotice title="Configuracion pendiente" lines={missingConfigLines} />
-        )}
+        )} */}
 
-        {appError && (
+{/*         {appError && (
           <section className="config-notice error-notice">
             <strong>Error de integracion</strong>
             <p>{appError}</p>
@@ -60,7 +61,7 @@ export default function Dashboard() {
               Ocultar
             </button>
           </section>
-        )}
+        )} */}
 
         <ChatPanel
           apiBaseUrl={apiBaseUrl}

@@ -12,17 +12,19 @@ export default function ProcessPanel({ conversation }) {
   const nodeMeta = getNodeMeta(currentNode);
   const productLabel = getProductLabel(conversation?.productIntent, conversation?.productName);
   const steps = getStepsForConversation(conversation);
-  const phaseLabel =
+  /* Herramientas para Desarrollador: No renderizar 
+    const phaseLabel =
     conversation?.productIntent === 'LOAN' || currentNode?.startsWith('LOAN_')
       ? 'Fase 2 Dev 2'
-      : 'Fase 1 Dev 2';
+      : 'Fase 1 Dev 2'; */
 
   return (
     <aside className="process-panel">
       <div className="panel-block">
         <div className="panel-title-row">
-          <span>Flux Progress Monitor</span>
-          <small>{phaseLabel}</small>
+          <span>En qué estamos...</span>
+          {/*Herramientas para Desarrollador: No renderizar
+          <small>{phaseLabel}</small> */}
         </div>
 
         <ol className="milestones">
@@ -44,6 +46,7 @@ export default function ProcessPanel({ conversation }) {
         </ol>
       </div>
 
+      {/* Herramientas para Desarrollador: No renderizar
       <section className="status-stack">
         <article className="status-card">
           <span className="status-label">Nodo actual</span>
@@ -75,7 +78,7 @@ export default function ProcessPanel({ conversation }) {
           <p>El `conversation_id` real se asigna al primer POST exitoso del stream.</p>
           <code>{conversation?.isDraft ? 'draft' : conversation?.id}</code>
         </article>
-      </section>
+      </section> */}
     </aside>
   );
 }

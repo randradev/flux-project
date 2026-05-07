@@ -59,7 +59,7 @@ export default function ChatPanel({
           <Brand />
           <div>
             <strong>{user?.user_metadata?.full_name || user?.email || 'Sesion FLUX'}</strong>
-            <small>{apiBaseUrl}</small>
+            {/* <small>{apiBaseUrl}</small> */}
           </div>
         </div>
 

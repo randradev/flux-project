@@ -29,7 +29,6 @@ export default function Sidebar({
     <aside className="left-panel">
       <div className="sidebar-head">
         <Brand />
-        <p>Banca Digital</p>
       </div>
 
       <div className="sidebar-actions">
@@ -42,7 +41,7 @@ export default function Sidebar({
       </div>
 
       <div className="panel-title-row">
-        <span>Historial real</span>
+        <span>Tu historial</span>
         <small>{conversations.length} conversaciones</small>
       </div>
 
@@ -55,7 +54,6 @@ export default function Sidebar({
           <span className="history-icon">NW</span>
           <span>
             <strong>Nueva conversacion</strong>
-            <small>Sin persistir hasta el primer mensaje</small>
           </span>
         </button>
 
@@ -78,7 +76,6 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-foot">
-        <p>Eliminar conversaciones quedara habilitado cuando el backend exponga ese endpoint.</p>
         <button className="secondary-button" type="button" disabled>
           Borrar conversacion
         </button>
