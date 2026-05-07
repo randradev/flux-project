@@ -123,11 +123,12 @@ export const PHASE_ONE_STEPS = [
 
 export const PRODUCT_STEPS = {
   GENERAL: PHASE_ONE_STEPS,
-  LOAN: [
+    LOAN: [
     {
       id: 'LOAN_INIT',
       label: 'Inicio',
-      description: 'Creacion de la solicitud.'
+      description: 'Creacion de la solicitud.',
+      hidden: true
     },
     {
       id: 'LOAN_COLLECTING_PROFILE',
@@ -162,24 +163,32 @@ export const PRODUCT_STEPS = {
     {
       id: 'LOAN_COMPLETED',
       label: 'Completado',
-      description: 'Cierre exitoso.'
+      description: 'Cierre exitoso.',
+      terminal: true
     },
     {
       id: 'LOAN_REJECTED_POLICY',
       label: 'Rechazo',
-      description: 'Cierre por politica.'
+      description: 'Cierre por politica.',
+      hidden: true,
+      terminal: true
     },
     {
       id: 'LOAN_SECURITY_BLOCK',
       label: 'Bloqueo',
-      description: 'Cierre por seguridad.'
+      description: 'Cierre por seguridad.',
+      hidden: true,
+      terminal: true
     },
     {
       id: 'LOAN_CLOSED_BY_USER',
       label: 'Cerrado',
-      description: 'Cierre voluntario.'
+      description: 'Cierre voluntario.',
+      hidden: true,
+      terminal: true
     }
   ]
+
 };
 
 const FINAL_NODE_IDS = new Set([
@@ -290,30 +299,32 @@ export function getPhaseStepIndex(currentNode) {
     return 2;
   }
 
-  if (normalizedNodeId.startsWith('LOAN_')) {
-    const loanIndex = PRODUCT_STEPS.LOAN.findIndex((step) => step.id === normalizedNodeId);
-    return loanIndex >= 0 ? loanIndex : 0;
-  }
-
-  return 0;
+  // Búsqueda agnóstica: buscamos el índice en el producto que corresponda al nodo
+  const product = getProductFromNode(normalizedNodeId);
+  const steps = PRODUCT_STEPS[product] || [];
+  const index = steps.findIndex((step) => step.id === normalizedNodeId);
+  
+  return index >= 0 ? index : 0;
 }
 
-export function getMilestoneState(stepId, currentNode, index, steps) {
+export function getMilestoneState(stepId, currentNode) {
   const normalizedNodeId = normalizeNodeId(currentNode);
-  const currentStepIndex = getPhaseStepIndex(normalizedNodeId);
-
+  const product = getProductFromNode(normalizedNodeId);
+  const allSteps = PRODUCT_STEPS[product] || [];
+  const currentIndex = allSteps.findIndex((s) => s.id === normalizedNodeId);
+  const stepIndex = allSteps.findIndex((s) => s.id === stepId);
+  const currentStepObj = allSteps[currentIndex];
+  // 1. Es el nodo activo
   if (normalizedNodeId === stepId) {
-    return LOAN_TERMINAL_NODES.has(stepId) ? 'terminal' : 'active';
+    return currentStepObj?.terminal ? 'terminal' : 'active';
   }
-
-  if (normalizedNodeId && LOAN_TERMINAL_NODES.has(normalizedNodeId)) {
-    const terminalIndex = steps.findIndex((step) => step.id === normalizedNodeId);
-    return index < terminalIndex ? 'complete' : 'waiting';
+  // 2. Comparación de progreso basada en el orden de la lista completa
+  if (currentIndex !== -1 && stepIndex !== -1) {
+    return stepIndex < currentIndex ? 'complete' : 'waiting';
   }
-
-  return index < currentStepIndex ? 'complete' : 'waiting';
+  return 'waiting';
 }
-
+// ESTA ES LA FUNCIÓN QUE FALTABA:
 export function getFlowResultLabel(currentNode) {
   return getNodeMeta(currentNode).label;
 }

@@ -11,7 +11,7 @@ export default function ProcessPanel({ conversation }) {
   const currentNode = conversation?.currentNode ?? null;
   const nodeMeta = getNodeMeta(currentNode);
   const productLabel = getProductLabel(conversation?.productIntent, conversation?.productName);
-  const steps = getStepsForConversation(conversation);
+  const steps = getStepsForConversation(conversation).filter(step => !step.hidden);
   /* Herramientas para Desarrollador: No renderizar 
     const phaseLabel =
     conversation?.productIntent === 'LOAN' || currentNode?.startsWith('LOAN_')
