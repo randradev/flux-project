@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Brand from './Brand';
 import CreditWidgets from './widgets/CreditWidgets';
+import WelcomeMessage from './WelcomeMessage';
 
 function formatMessageTime(value) {
   if (!value) {
@@ -35,6 +36,11 @@ export default function ChatPanel({
 
     windowRef.current.scrollTop = windowRef.current.scrollHeight;
   }, [conversation?.messages?.length, conversation?.currentNode, sending]);
+
+  function handleProductSelect(intent, label) {
+    onSendMessage(`Me interesa: ${label}`, intent);
+  }
+
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -74,14 +80,9 @@ export default function ChatPanel({
 
       <div ref={windowRef} className="chat-window" aria-live="polite">
         {!conversation?.messages?.length && (
-          <section className="empty-state">
-            <h2>Frontend conectado a flujo real</h2>
-            <p>
-              Envia un mensaje para abrir una conversacion. El backend deberia responder por SSE con
-              `message`, `node_transition` y `done`.
-            </p>
-          </section>
+          <WelcomeMessage onSelect={handleProductSelect} />
         )}
+      
 
         {loadingMessages && (
           <section className="loading-inline">

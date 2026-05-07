@@ -4,6 +4,7 @@ import LoginPage from './components/LoginPage';
 import RegisterPage from './components/RegisterPage';
 import { FluxProvider } from './context/FluxContext';
 import { useAuth } from './hooks/useAuth';
+import './styles.css';
 
 export default function App() {
   const { accessToken, isAuthenticated, loading, screen, setScreen } = useAuth();

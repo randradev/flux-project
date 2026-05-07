@@ -5,7 +5,6 @@ import ProcessPanel from './ProcessPanel';
 import Sidebar from './Sidebar';
 import { useAuth } from '../hooks/useAuth';
 import { useFlux } from '../hooks/useFlux';
-import ProductSelectorModal from './ProductSelectorModal';
 
 export default function Dashboard() {
   const { hasSupabaseConfig, signOut, user } = useAuth();
@@ -34,16 +33,6 @@ export default function Dashboard() {
     !hasSupabaseConfig && 'Falta configurar Supabase Auth.',
     !hasApiConfig && 'Falta configurar la URL base del backend.'
   ].filter(Boolean);
-
-  const isNewConversation = 
-    selectedConversationId === DRAFT_ID && 
-    (!selectedConversation?.messages || selectedConversation.messages.length === 0);
-
-  const handleProductSelect = (intent, label) => {
-    // Enviamos el mensaje inicial con la intención oculta
-    sendMessage(`Me interesa: ${label}`, intent);
-  };
-
 
   return (
     <main className="app-shell">
@@ -85,9 +74,6 @@ export default function Dashboard() {
           sending={sending}
           user={user}
         />
-        {isNewConversation && !sending && (
-          <ProductSelectorModal onSelect={handleProductSelect} />
-        )}
       </section>
       
     </main>
