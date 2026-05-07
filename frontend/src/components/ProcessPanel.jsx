@@ -31,7 +31,7 @@ export default function ProcessPanel({ conversation }) {
           {steps.map((step, index) => {
             const state = getMilestoneState(step.id, currentNode, index, steps);
             const description =
-              step.id === 'FLOW_RESULT' && currentNode ? getFlowResultLabel(currentNode) : step.description;
+              step.id === 'FLOW_RESULT' && currentNode ? getFlowResultLabel(currentNode) : '';
 
             return (
               <li key={step.id} className={state}>
