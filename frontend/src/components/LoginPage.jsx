@@ -29,18 +29,17 @@ export default function LoginPage({ onRegister }) {
   return (
     <main className="screen-shell auth-screen">
       <header className="topbar">
-        <span>FLUX frontend fase 1</span>
+        <span></span>
         <Brand compact />
       </header>
 
       <section className="auth-card">
         <Brand />
         <div className="hero-copy">
-          <span className="eyebrow">Banca digital conversacional</span>
-          <h1>Login real con Supabase</h1>
+          <span className="eyebrow">Tu dinero, en lenguaje humano</span>
+          <h1>Inicia Sesión</h1>
           <p>
-            Esta version deja la maqueta atras: autentica usuarios y prepara el dashboard para
-            consumir historial y streaming SSE del backend FLUX.
+            Ingresa tu usuario y contraseña... ¡Y comencemos a hablar de tus finanzas sin burocracia!
           </p>
         </div>
 
@@ -87,7 +86,7 @@ export default function LoginPage({ onRegister }) {
         </form>
 
         <div className="auth-footer">
-          <p>El backend FLUX espera un JWT de Supabase valido en cada request.</p>
+          <p>¿No tienes cuenta?</p>
           <button className="secondary-button" type="button" onClick={onRegister}>
             Crear cuenta
           </button>

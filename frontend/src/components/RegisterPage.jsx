@@ -53,11 +53,10 @@ export default function RegisterPage({ onBack }) {
       <section className="auth-card register-card">
         <Brand />
         <div className="hero-copy">
-          <span className="eyebrow">Registro con Supabase Auth</span>
-          <h1>Crear acceso FLUX</h1>
+          <span className="eyebrow">Regístrate</span>
+          <h1>Crea tu cuenta Flux</h1>
           <p>
-            Esta pantalla registra la cuenta en Supabase Auth. Para usar el backend, el mismo email
-            debe existir tambien en la tabla <code>users</code> del proyecto FLUX.
+            Ingresa tus datos, crea tu cuenta y únete a Flux, ¡tus finanzas sin burocracia!
           </p>
         </div>
 
@@ -128,7 +127,7 @@ export default function RegisterPage({ onBack }) {
             </label>
 
             <label>
-              Password
+              Contraseña
               <input
                 value={formData.password}
                 onChange={(event) => updateField('password', event.target.value)}
@@ -147,7 +146,7 @@ export default function RegisterPage({ onBack }) {
                 {submitting ? 'Creando...' : 'Crear cuenta'}
               </button>
               <button className="secondary-button" type="button" onClick={onBack}>
-                Volver al login
+                Volver al inicio de sesión
               </button>
             </div>
           </form>
@@ -157,11 +156,10 @@ export default function RegisterPage({ onBack }) {
           <section className="status-card">
             <h2>Confirma tu correo</h2>
             <p>
-              Supabase creo la cuenta y envio la confirmacion por email. Cuando la actives, vuelve
-              al login para abrir sesion.
+              ¡Queda poco! Confirma desde tu correo y vuelve para iniciar sesión.
             </p>
             <button className="secondary-button" type="button" onClick={onBack}>
-              Ir al login
+              Volver al inicio de sesión
             </button>
           </section>
         )}
@@ -169,9 +167,9 @@ export default function RegisterPage({ onBack }) {
         {status === 'done' && (
           <section className="status-card">
             <h2>Cuenta creada</h2>
-            <p>Tu acceso quedo habilitado. Si el perfil existe en la tabla users, ya puedes usar FLUX.</p>
+            <p>¡Felicidades! Tu cuenta ya está habilitada. Ahora, ¡conversemos de tus finanzas!</p>
             <button className="secondary-button" type="button" onClick={onBack}>
-              Ir al login
+              Volver al inicio de sesión
             </button>
           </section>
         )}
