@@ -38,7 +38,8 @@ export default function ChatPanel({
   }, [conversation?.messages?.length, conversation?.currentNode, sending]);
 
   function handleProductSelect(intent, label) {
-    onSendMessage(`Me interesa: ${label}`, intent);
+    // Enviamos el intent directamente como mensaje para forzar al backend
+    onSendMessage(intent, intent);
   }
 
 

@@ -395,7 +395,7 @@ def loan_init_node(state: FluxState) -> dict:
     # Esto garantiza que tras el renacimiento del grafo, route_after_welcome
     # dirija directamente a loan_collecting_profile sin pasar por loan_init de nuevo.
     return {
-        "messages": [AIMessage(content=msg)],
+        "messages": [],
         "session": {**session, "current_node": "LOAN_COLLECTING_PROFILE"},
         "collecting_data": {
             "loan_profile": {},
