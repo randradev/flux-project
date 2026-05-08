@@ -54,7 +54,18 @@ from app.graph.nodes.credit import (
     loan_security_block_node,
     loan_closed_by_user_node,
 )
-from app.graph.nodes.account import account_init_node, account_collecting_profile_node, account_evaluation_engine_node
+from app.graph.nodes.account import (
+    account_init_node,
+    account_collecting_profile_node,
+    account_evaluation_engine_node,
+    account_pre_approved_node,
+    account_otp_validation_node,
+    account_formalization_node,
+    account_completed_node,
+    account_rejected_policy_node,
+    account_security_block_node,
+    account_closed_by_user_node,
+)
 from app.graph.nodes.deposit import dap_init_node, dap_collect_data_node, dap_investment_engine_node
 from app.graph.edges import (
     route_after_welcome,
@@ -68,6 +79,10 @@ from app.graph.edges import (
     route_after_loan_formalization,
     # Cuenta Corriente
     route_after_account_collecting_profile,
+    route_after_account_evaluation_engine,
+    route_after_account_pre_approved,
+    route_after_account_otp_validation,
+    route_after_account_formalization,
 )
 from app.infra.checkpointer import get_checkpointer
 
@@ -108,6 +123,13 @@ def build_graph() -> StateGraph:
     │ account_init                 │ ACCOUNT_INIT                     │
     │ account_collecting_profile   │ ACCOUNT_COLLECTING_PROFILE       │
     │ account_evaluation_engine    │ ACCOUNT_EVALUATION_ENGINE        │
+    │ account_pre_approved         │ ACCOUNT_PRE_APPROVED             │
+    │ account_otp_validation       │ ACCOUNT_OTP_VALIDATION           │
+    │ account_formalization        │ ACCOUNT_FORMALIZATION            │
+    │ account_completed            │ ACCOUNT_COMPLETED                │
+    │ account_rejected_policy      │ ACCOUNT_REJECTED_POLICY          │
+    │ account_security_block       │ ACCOUNT_SECURITY_BLOCK           │
+    │ account_closed_by_user       │ ACCOUNT_CLOSED_BY_USER           │
     │ dap_init                     │ DAP_INIT                         │
     │ dap_collect_data             │ DAP_COLLECT_DATA                 │
     │ dap_investment_engine        │ DAP_INVESTMENT_ENGINE            │
@@ -142,9 +164,20 @@ def build_graph() -> StateGraph:
     graph.add_node("loan_closed_by_user",        loan_closed_by_user_node)
 
     # ── Cuenta Corriente ─────────────────────────────────────────────
+    # Recolección
     graph.add_node("account_init",               account_init_node)
-    graph.add_node("account_collecting_profile", account_collecting_profile_node) # placeholder
+    graph.add_node("account_collecting_profile", account_collecting_profile_node)
+    # Evaluación y Oferta
     graph.add_node("account_evaluation_engine",  account_evaluation_engine_node)
+    graph.add_node("account_pre_approved",       account_pre_approved_node)
+    # Formalización y Cierre
+    graph.add_node("account_otp_validation",     account_otp_validation_node)
+    graph.add_node("account_formalization",      account_formalization_node)
+    graph.add_node("account_completed",          account_completed_node)
+    # Excepciones
+    graph.add_node("account_rejected_policy",    account_rejected_policy_node)
+    graph.add_node("account_security_block",     account_security_block_node)
+    graph.add_node("account_closed_by_user",     account_closed_by_user_node)
 
     # ── Depósito a Plazo ─────────────────────────────────────────────
     graph.add_node("dap_init",                   dap_init_node)
@@ -179,7 +212,8 @@ def build_graph() -> StateGraph:
             # Reanudación de oferta/OTP
             "loan_pre_approved":           "loan_pre_approved",
             "loan_otp_validation":         "loan_otp_validation",
-            
+            "account_pre_approved":        "account_pre_approved",
+            "account_otp_validation":      "account_otp_validation",
             # Saltos por éxito (desde _SUCCESS_MAP vía P1)
             "loan_risk_engine":            "loan_risk_engine",
             "loan_formalization":          "loan_formalization",
@@ -187,6 +221,11 @@ def build_graph() -> StateGraph:
             "loan_security_block":         "loan_security_block",
             "loan_closed_by_user":         "loan_closed_by_user",
             "account_evaluation_engine":   "account_evaluation_engine",
+            "account_formalization":       "account_formalization",
+            "account_completed":           "account_completed",
+            "account_rejected_policy":     "account_rejected_policy",
+            "account_security_block":      "account_security_block",
+            "account_closed_by_user":      "account_closed_by_user",
             "dap_investment_engine":       "dap_investment_engine",
             # General
             "general_response":            "general_response",
@@ -285,8 +324,12 @@ def build_graph() -> StateGraph:
     # ──────────────────────────────────────────────────────────────────────────────────────
     # RUTAS DE CUENTA CORRIENTE
     # ──────────────────────────────────────────────────────────────────────────────────────
-    graph.add_edge("account_init", END)
-    
+    # account_init → account_collecting_profile (NO va a END)
+    # Razón: account_init es un nodo de bienvenida automático que no espera input.
+    # Transiciona directamente al primer nodo de recolección en el mismo turno.
+    graph.add_edge("account_init", "account_collecting_profile")
+
+    # Recolección de perfil (con salto condicional al completarse)
     graph.add_conditional_edges(
         "account_collecting_profile",
         route_after_account_collecting_profile,
@@ -296,7 +339,53 @@ def build_graph() -> StateGraph:
         }
     )
 
-    graph.add_edge("account_evaluation_engine", END)
+    # Motor de evaluación (bifurcación: aprobado / rechazado)
+    graph.add_conditional_edges(
+        "account_evaluation_engine",
+        route_after_account_evaluation_engine,
+        {
+            "account_pre_approved":    "account_pre_approved",
+            "account_rejected_policy": "account_rejected_policy",
+        }
+    )
+
+    # Oferta (bifurcación: aceptada / rechazada por usuario)
+    graph.add_conditional_edges(
+        "account_pre_approved",
+        route_after_account_pre_approved,
+        {
+            "account_otp_validation":  "account_otp_validation",
+            "account_closed_by_user":  "account_closed_by_user",
+            END: END,  # Espera turno del usuario
+        }
+    )
+
+    # Validación OTP (bifurcación: éxito / bloqueo de seguridad)
+    graph.add_conditional_edges(
+        "account_otp_validation",
+        route_after_account_otp_validation,
+        {
+            "account_formalization":   "account_formalization",
+            "account_security_block":  "account_security_block",
+            END: END,  # Espera turno del usuario (código incorrecto, reintento)
+        }
+    )
+
+    # Formalización → Completado (bifurcación condicional)
+    graph.add_conditional_edges(
+        "account_formalization",
+        route_after_account_formalization,
+        {
+            "account_completed": "account_completed",
+            END: END,
+        }
+    )
+
+    # Nodos terminales → END
+    graph.add_edge("account_completed",      END)
+    graph.add_edge("account_rejected_policy", END)
+    graph.add_edge("account_security_block",  END)
+    graph.add_edge("account_closed_by_user",  END)
 
     # ──────────────────────────────────────────────────────────────────────────────────────
     # RUTAS DE DEPÓSITO A PLAZO

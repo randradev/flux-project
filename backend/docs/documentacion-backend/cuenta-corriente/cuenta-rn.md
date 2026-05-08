@@ -38,6 +38,6 @@ Producto bancario que permite al cliente administrar dinero mediante una cuenta,
     - Plan: MEDIUM (Upgrade aplicado por Título Universitario)
     - Línea de Crédito: $500.000.
     - Costo Mensual: $0 (Promoción MVP).
-- La Tarjeta de Transparencia debe tener un botón "Aceptar", y debe ser la única vía a partir de la cual se puede aceptar la cuenta corriente (no sirve decir sí por el chat). También debe tener un botón de "Rechazar", que lleva a un estado de cierre voluntario.
-- Tras la aceptación, se envía un código para autenticación OTP, el chat avisa y muestra en la intefaz un campo para rellenar con el código. Si la autenticación falla, el chat debe avisar que falló y ofrecer una nueva instancia de autenticación. Si falla 3 veces, se rechaza la cuenta corriente.
+- La Tarjeta de Transparencia sirve para que el usuario pueda ver de manera ordenada y clara su propuesta, y así pueda tomar la mejor decisión, que debe ser comunicada directamente al LLM por el chat.
+- Tras la aceptación, se envía un código para autenticación OTP, el chat avisa y espera que el usuario le escriba el código de 6 dígitos por el chat. Si la autenticación falla, el bot debe avisar que falló y ofrecer una nueva instancia de autenticación. Si falla 3 veces, se rechaza la cuenta corriente.
 - Si la autenticación es exitosa, se genera un pdf con un hashing SHA-256 como contrato, y el bot felicita y se despide.

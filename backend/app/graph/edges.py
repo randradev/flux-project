@@ -37,7 +37,7 @@ _RESUME_MAP = {
     "LOAN_INIT":                   "loan_init",
     "LOAN_COLLECTING_PROFILE":     "loan_collecting_profile",
     "LOAN_COLLECTING_SIMULATION":  "loan_collecting_simulation",
-    # Crédito de Consumo — Evaluación y Oferta (NUEVOS)
+    # Crédito de Consumo — Evaluación y Oferta
     "LOAN_PRE_APPROVED":           "loan_pre_approved",
     "LOAN_OTP_VALIDATION":         "loan_otp_validation",
     # NOTA: LOAN_RISK_ENGINE y LOAN_FORMALIZATION son nodos de servicio automáticos.
@@ -47,6 +47,13 @@ _RESUME_MAP = {
     # Cuenta Corriente
     "ACCOUNT_INIT":                "account_init",
     "ACCOUNT_COLLECTING_PROFILE":  "account_collecting_profile",
+    # Cuenta Corriente - Evaluación y Oferta
+    "ACCOUNT_PRE_APPROVED":        "account_pre_approved",
+    "ACCOUNT_OTP_VALIDATION":      "account_otp_validation",
+    # NOTA: ACCOUNT_EVALUATION_ENGINE y ACCOUNT_FORMALIZATION son nodos de servicio automáticos.
+    # No tienen reanudación por turno: si el proceso se interrumpe en ellos,
+    # la reanudación ocurre vía _SUCCESS_MAP desde el paso previo.
+    
     # Depósito a Plazo
     "DAP_INIT":                    "dap_init",
     "DAP_COLLECT_DATA":            "dap_collect_data",
@@ -78,6 +85,13 @@ _VALID_DESTINATION_NODES: frozenset[str] = frozenset({
     "account_init",
     "account_collecting_profile",
     "account_evaluation_engine",
+    "account_pre_approved",
+    "account_otp_validation",
+    "account_formalization",
+    "account_completed",
+    "account_rejected_policy",
+    "account_security_block",
+    "account_closed_by_user",
     # DAP
     "dap_init",
     "dap_collect_data",
@@ -103,7 +117,15 @@ _SUCCESS_MAP: dict[str, dict[str, str]] = {
         CompletedStep.LOAN_SECURITY_BLOCK: "loan_security_block",
     },
     "ACCOUNT": {
-        CompletedStep.ACCOUNT_PROFILE: "account_evaluation_engine",
+        CompletedStep.ACCOUNT_PROFILE:               "account_evaluation_engine",
+        CompletedStep.ACCOUNT_EVALUATION_SUCCESS:    "account_pre_approved",
+        CompletedStep.ACCOUNT_PRE_APPROVED:          "account_otp_validation",
+        CompletedStep.ACCOUNT_OTP_SUCCESS:           "account_formalization",
+        CompletedStep.ACCOUNT_FORMALIZATION_SUCCESS: "account_completed",
+
+        CompletedStep.ACCOUNT_EVALUATION_REJECTED:   "account_rejected_policy",
+        CompletedStep.ACCOUNT_CLOSED_BY_USER:        "account_closed_by_user",
+        CompletedStep.ACCOUNT_SECURITY_BLOCK:        "account_security_block",
     },
     "DAP": {
         CompletedStep.DAP_DATA: "dap_investment_engine",
@@ -157,13 +179,40 @@ def _get_completed_steps_for_product(state: dict, product: str) -> list[str]:
             completed.append(CompletedStep.LOAN_OTP_SUCCESS)
         elif state.get("auth_control", {}).get("security_blocked"):
             completed.append(CompletedStep.LOAN_SECURITY_BLOCK)
+        
         # D. Formalización (Final del flujo)
         if product_progress.get("contract_signed"):
             completed.append(CompletedStep.LOAN_FORMALIZATION_SUCCESS)
     
+    # CUENTA CORRIENTE
     elif product == "ACCOUNT":
+        # A. Recolección
         if product_progress.get("profile_completed"):
             completed.append(CompletedStep.ACCOUNT_PROFILE)
+
+        # B. Evaluación
+        if product_progress.get("evaluation_engine_completed"):
+            engine_status = state.get("evaluation_results", {}).get("account_engine", {}).get("status_proceso")
+            if engine_status == "PRE_APPROVED":
+                completed.append(CompletedStep.ACCOUNT_EVALUATION_SUCCESS)
+            else:
+                completed.append(CompletedStep.ACCOUNT_EVALUATION_REJECTED)
+
+        # C. Oferta y OTP
+        if product_progress.get("pre_approval_accepted"):
+            completed.append(CompletedStep.ACCOUNT_PRE_APPROVED)
+        elif product_progress.get("closed_by_user"):
+            completed.append(CompletedStep.ACCOUNT_CLOSED_BY_USER)
+
+        if product_progress.get("otp_validated"):
+            completed.append(CompletedStep.ACCOUNT_OTP_SUCCESS)
+        elif state.get("auth_control", {}).get("security_blocked"):
+            completed.append(CompletedStep.ACCOUNT_SECURITY_BLOCK)
+
+        # D. Formalización (Final del flujo)
+        if product_progress.get("contract_signed"):
+            completed.append(CompletedStep.ACCOUNT_FORMALIZATION_SUCCESS)
+    
     elif product == "DAP":
         if product_progress.get("data_completed"):
             completed.append(CompletedStep.DAP_DATA)
@@ -397,3 +446,97 @@ def route_after_account_collecting_profile(state: FluxState) -> str:
     if just_completed == CompletedStep.ACCOUNT_PROFILE:
         return "account_evaluation_engine"
     return END
+
+def route_after_account_evaluation_engine(state: FluxState) -> str:
+    """
+    Decisión de arista post-account_evaluation_engine.
+
+    El motor de evaluación es un nodo de servicio automático: siempre completa
+    su trabajo en el mismo turno y emite exactamente uno de dos CompletedStep:
+      - ACCOUNT_EVALUATION_SUCCESS  → account_pre_approved
+      - ACCOUNT_EVALUATION_REJECTED → account_rejected_policy
+
+    NOTA: Este edge NO tiene rama END porque account_evaluation_engine nunca
+    espera input del usuario. Si just_completed_step es None o inesperado,
+    se redirige a account_rejected_policy como fallback seguro (evita loop).
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.ACCOUNT_EVALUATION_SUCCESS:
+        return "account_pre_approved"
+    if just_completed == CompletedStep.ACCOUNT_EVALUATION_REJECTED:
+        return "account_rejected_policy"
+
+    # Fallback defensivo: si el motor no emitió señal, redirigir a rechazo
+    _routing_logger.warning(
+        f"route_after_account_evaluation_engine: just_completed_step='{just_completed}' "
+        "inesperado. Redirigiendo a 'account_rejected_policy' como fallback."
+    )
+    return "account_rejected_policy"
+
+
+def route_after_account_pre_approved(state: FluxState) -> str:
+    """
+    Decisión de arista post-account_pre_approved.
+
+    Este nodo espera la decisión del usuario (ACCEPTED / REJECTED).
+    La señal viaja en just_completed_step:
+      - ACCOUNT_PRE_APPROVED    → account_otp_validation  (usuario aceptó)
+      - ACCOUNT_CLOSED_BY_USER  → account_closed_by_user  (usuario rechazó)
+      - None                    → END                      (primer turno: espera respuesta)
+
+    REGLA: Si el nodo acaba de generar la tarjeta de transparencia y aún
+    no hay respuesta del usuario, just_completed_step será None → END.
+    En el siguiente turno, el nodo vuelve a ejecutarse, lee la respuesta
+    y emite el CompletedStep correspondiente.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.ACCOUNT_PRE_APPROVED:
+        return "account_otp_validation"
+    if just_completed == CompletedStep.ACCOUNT_CLOSED_BY_USER:
+        return "account_closed_by_user"
+
+    return END  # Esperar respuesta del usuario
+
+
+def route_after_account_otp_validation(state: FluxState) -> str:
+    """
+    Decisión de arista post-account_otp_validation.
+
+    El nodo OTP espera que el usuario ingrese el código.
+    La señal viaja en just_completed_step:
+      - ACCOUNT_OTP_SUCCESS    → account_formalization    (código correcto)
+      - ACCOUNT_SECURITY_BLOCK → account_security_block   (3 intentos fallidos)
+      - None                   → END                      (código incorrecto, reintento)
+
+    DISEÑO DE RETENCIÓN: Cuando el código es incorrecto pero hay intentos
+    disponibles, el nodo actualiza el contador en auth_control y retorna
+    sin setear just_completed_step → este edge retorna END → el grafo espera
+    otro turno → el nodo OTP vuelve a ejecutarse en el siguiente mensaje.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.ACCOUNT_OTP_SUCCESS:
+        return "account_formalization"
+    if just_completed == CompletedStep.ACCOUNT_SECURITY_BLOCK:
+        return "account_security_block"
+
+    return END  # Código incorrecto: esperar reintento del usuario
+
+
+def route_after_account_formalization(state: FluxState) -> str:
+    """
+    Decisión de arista post-account_formalization.
+    Solo permite el avance al éxito si el contrato se selló y subió correctamente.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.ACCOUNT_FORMALIZATION_SUCCESS:
+        return "account_completed"
+
+    return END  # Si falló (None), el flujo se detiene por seguridad.

@@ -15,23 +15,39 @@ class CompletedStep:
     Se setea al completar un paso; se limpia en el return del nodo generador.
     """
     # ── Recolección (ya existentes) ───────────────────────────
+    # LOAN
     LOAN_PROFILE    = "LOAN_PROFILE"
     LOAN_SIMULATION = "LOAN_SIMULATION"
+    # ACCOUNT
     ACCOUNT_PROFILE = "ACCOUNT_PROFILE"
+    # DAP
     DAP_DATA        = "DAP_DATA"
 
     # ── Evaluación y Oferta (NUEVOS) ──────────────────────────
+    # LOAN
     LOAN_RISK_SUCCESS  = "LOAN_RISK_SUCCESS"   # Motor calculó y aprobó
     LOAN_RISK_REJECTED = "LOAN_RISK_REJECTED"  # Motor calculó y rechazó por política
+    # ACCOUNT
+    ACCOUNT_EVALUATION_SUCCESS  = "ACCOUNT_EVALUATION_SUCCESS"   # Motor aprobó
+    ACCOUNT_EVALUATION_REJECTED = "ACCOUNT_EVALUATION_REJECTED"  # Motor rechazó
 
     # ── Formalización (NUEVOS) ────────────────────────────────
+    # LOAN
     LOAN_PRE_APPROVED  = "LOAN_PRE_APPROVED"   # Usuario aceptó la oferta
     LOAN_OTP_SUCCESS   = "LOAN_OTP_SUCCESS"    # OTP validado correctamente
     LOAN_FORMALIZATION_SUCCESS = "LOAN_FORMALIZATION_SUCCESS"   # Formalización exitosa
+    # ACCOUNT
+    ACCOUNT_PRE_APPROVED          = "ACCOUNT_PRE_APPROVED"         # Usuario aceptó
+    ACCOUNT_OTP_SUCCESS           = "ACCOUNT_OTP_SUCCESS"          # OTP validado
+    ACCOUNT_FORMALIZATION_SUCCESS = "ACCOUNT_FORMALIZATION_SUCCESS" # Contrato sellado
 
     # ── Excepciones (NUEVOS) ──────────────────────────────────
+    # LOAN
     LOAN_SECURITY_BLOCK  = "LOAN_SECURITY_BLOCK"   # 3 intentos OTP fallidos
     LOAN_CLOSED_BY_USER  = "LOAN_CLOSED_BY_USER"   # Usuario rechazó la oferta
+    # ACCOUNT
+    ACCOUNT_SECURITY_BLOCK  = "ACCOUNT_SECURITY_BLOCK"   # 3 intentos OTP fallidos
+    ACCOUNT_CLOSED_BY_USER  = "ACCOUNT_CLOSED_BY_USER"   # Usuario rechazó la oferta
 
 
 class ProductPrefix:

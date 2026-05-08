@@ -61,7 +61,12 @@ class LoanProgress(TypedDict, total=False):
 
 class AccountProgress(TypedDict, total=False):
     """Registro histórico de completitud del flujo de cuenta corriente."""
-    profile_completed: bool
+    profile_completed:          bool   # True cuando account_profile tiene todos los campos
+    evaluation_engine_completed: bool  # True cuando el motor de evaluación ya se ejecutó
+    pre_approval_accepted:      bool   # True cuando el usuario acepta la tarjeta de transparencia
+    closed_by_user:             bool   # True cuando el usuario rechaza la oferta
+    otp_validated:              bool   # True cuando el OTP es verificado exitosamente
+    contract_signed:            bool   # True cuando el contrato fue firmado digitalmente
 
 class DapProgress(TypedDict, total=False):
     """Registro histórico de completitud del flujo de depósito a plazo."""
