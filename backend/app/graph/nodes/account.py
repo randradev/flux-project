@@ -13,7 +13,7 @@ from app.graph.state import FluxState
 from app.infra.supabase import update_application_semaphores, upload_contract_to_storage
 from app.infra.gemini_client import get_structured_model, get_generation_model
 from app.graph.nodes.schemas.account_schemas import AccountProfileExtraction, AccountSimExtraction, AccountDecisionExtraction, AccountOTPExtraction
-# from app.modules.credit_eng import CreditEngine, PolicyRejectionError, PaymentCapacityError
+from app.modules.account_eng import AccountEngine, PolicyRejectionError, PaymentCapacityError
 from app.utils.llm_utils import normalize_llm_response
 from app.graph.constants import CompletedStep
 from langchain_core.outputs import LLMResult
@@ -439,66 +439,100 @@ def account_collecting_profile_node(state: FluxState) -> dict:
 
 def account_evaluation_engine_node(state: FluxState) -> dict:
     """
-    Nodo ACCOUNT_EVALUATION_ENGINE: motor de evaluación para cuenta corriente.
+    Nodo ACCOUNT_EVALUATION_ENGINE: motor de riesgo para cuenta corriente.
 
     ID LangGraph : account_evaluation_engine
     current_node : ACCOUNT_EVALUATION_ENGINE   ← valor semántico para GPS y Supabase
 
-    INPUT (State leído):
-        - state["collecting_data"]["account_profile"]: renta, antiguedad_laboral, nivel_estudios
-        - state["preparation_data"]["edad"]: edad del usuario
-
-    PROCESO:
-        1. Extraer inputs de los namespaces correctos.
-        2. Invocar al motor de evaluación comercial (modules/account_eng.py).
-        3. Escribir todos los outputs en evaluation_results["account_engine"].
-        4. Actualizar semáforo: ACCOUNT_EVALUATION_ENGINE / SUCCESS / COMPLETED.
-
-    OUTPUT:
-        - evaluation_results["account_engine"]: Resultado completo del motor.
-        - session["current_node"]: "ACCOUNT_EVALUATION_ENGINE".
-
     NOTA ARQUITECTURA:
-        Wrapper de flujo. La lógica de categorización está delegada a
-        modules/account_eng.py para asegurar testabilidad.
+        Este nodo es un wrapper de flujo. La lógica de cálculo pesada debe residir
+        en módulos independientes (modules/account_eng.py) para facilitar tests unitarios.
     """
-    session = state.get("session", {})
-    prep = state.get("preparation_data", {})
+    # 1. ------ PREPARACIÓN DE DATOS ------
+    session    = state.get("session", {})
+    prep       = state.get("preparation_data", {})
     collecting = state.get("collecting_data", {})
-
+    evaluation_results = state.get("evaluation_results", {})
     account_profile = collecting.get("account_profile", {})
-    renta = account_profile.get("renta", 0)
-    antiguedad_laboral = account_profile.get("antiguedad_laboral", 0)
-    nivel_estudios = account_profile.get("nivel_estudios", "")
-    edad = prep.get("edad", 0)
 
-    # TODO Fase 3: engine_result = account_eng.calculate_account_category(...)
-    engine_result = {
-        "status_proceso": "PRE_APPROVED",
-        "is_elegible": True,
-        "base_category": "ADVANCE",
-        "final_category": "ADVANCE",
-        "has_upgrade": False,
-        "credit_line_amount": 500000,
-        "monthly_cost": 0,
-        "motivo_rechazo": None,
-    }
+    try:
+        # 2. ------ LLAMADA AL MOTOR REAL ------
+        engine = AccountEngine(
+            preparation_data=prep,
+            account_profile=account_profile,
+        )
+        engine_result = engine.run()
 
+    except PolicyRejectionError as e:
+        # Caso: Rechazo por Edad, Renta o Antigüedad
+        engine_result = {
+            "status_proceso": "REJECTED",
+            "is_elegible": False,
+            "base_category": engine.base_category,
+            "final_category": engine.final_category,
+            "has_upgrade": engine.has_upgrade,
+            "credit_line_amount": engine.credit_line,
+            "monthly_cost": engine.monthly_cost,
+            "motivo_rechazo": e.motivo
+        }
+
+    except Exception as e:
+        # Error técnico inesperado
+        print(f"[ERROR-ENGINE] Fallo crítico: {str(e)}")
+        engine_result = {
+            "status_proceso": "ERROR",
+            "motivo_rechazo": "ERR_INTERNAL",
+        }
+
+    # 3. ------ PERSISTENCIA Y SEMÁFOROS ------
     application_id = session.get("application_id")
     if application_id:
+        engine_status = "SUCCESS" if engine_result["status_proceso"] != "ERROR" else "FAILED"
         update_application_semaphores(
             application_id=application_id,
             current_node_id="ACCOUNT_EVALUATION_ENGINE",
             node_status="SUCCESS",
-            engine_status="COMPLETED",
+            engine_status=engine_status,
         )
+
+    # 4. ------ SELECCIÓN DE FLAG DE SALIDA ------
+    status = engine_result.get("status_proceso")
+    if status == "PRE_APPROVED":
+        completion_flag = CompletedStep.ACCOUNT_EVALUATION_SUCCESS
+        # Actualizar Progreso Histórico (Persistencia para ruteo P1)
+        current_progress = session.get("progress", {})
+        account_progress = current_progress.get("account", {})
+        session["progress"] = {
+            **current_progress,
+            "account": {**account_progress, "evaluation_engine_completed": True}
+        }
+    else:
+        # Cubre REJECTED y ERROR
+        completion_flag = CompletedStep.ACCOUNT_EVALUATION_REJECTED
 
     return {
         "evaluation_results": {
-            "account_engine": engine_result,
+            **evaluation_results,
+            "account_engine": engine_result
         },
-        "session": {**session, "current_node": "ACCOUNT_EVALUATION_ENGINE"},
+        "session": {
+            **session,
+            "just_completed_step": completion_flag,
+        }
     }
+
+    return {
+        "evaluation_results": {
+            **evaluation_results,
+            "account_engine": engine_result
+        },
+        "session": {
+            **session,
+            "just_completed_step": CompletedStep.ACCOUNT_EVALUATION_ENGINE,
+        }
+    }
+
+import datetime as _dt  # Alias para evitar colisión con nombres de variables locales
 
 # ======================================================================================================
 # HELPERS DEL FLUJO DE ACCOUNT

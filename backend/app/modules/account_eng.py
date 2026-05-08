@@ -62,7 +62,28 @@ class AccountEngine:
     Contiene la lógica core para asignar perfil, upgrades y línea de crédito.
     Todos sus métodos internos son estáticos e idempotentes.
     """
-
+    def __init__(self, preparation_data: dict, account_profile: dict):
+        self.preparation_data = preparation_data
+        self.account_profile = account_profile
+        # Inicializamos para evitar AttributeError en el nodo si hay un rechazo temprano
+        self.base_category = ""
+        self.final_category = ""
+        self.has_upgrade = False
+        self.credit_line = 0
+        self.monthly_cost = 0
+    
+    def run(self) -> dict:
+        # Ejecutamos la lógica
+        res = self.evaluate(self.preparation_data, self.account_profile)
+        
+        # Seteamos atributos en el objeto para que el nodo (el calco) pueda leerlos en el except
+        self.base_category = res.get("base_category", "")
+        self.final_category = res.get("final_category", "")
+        self.has_upgrade = res.get("has_upgrade", False)
+        self.credit_line = res.get("credit_line_amount", 0)
+        self.monthly_cost = res.get("monthly_cost", 0)
+        
+        return res
     @staticmethod
     def evaluate(preparation_data: dict, account_profile: dict) -> dict:
         """
@@ -101,25 +122,13 @@ class AccountEngine:
                 "monthly_cost": 0,  # Fijo por promoción MVP según RN
                 "motivo_rechazo": None
             }
-
-        except PolicyRejectionError as e:
-            # Rechazo por política: Mapea a AccountEngineResult con flags apagados
-            return {
-                "status_proceso": "REJECTED_POLICY",
-                "is_elegible": False,
-                "base_category": "",
-                "final_category": "",
-                "has_upgrade": False,
-                "credit_line_amount": 0,
-                "monthly_cost": 0,
-                "motivo_rechazo": e.motivo
-            }
         
+        except (PolicyRejectionError, EngineCalculationError):
+            # Dejamos que estas pasen directo al nodo
+            raise
         except Exception as e:
-            # Error crítico no atajado (TypeErrors, ValueError de parsing, etc.)
-            if not isinstance(e, EngineCalculationError):
-                raise EngineCalculationError(str(e))
-            raise e
+            # Cualquier otra cosa (TypeErrors, etc.) sí es un error de cálculo
+            raise EngineCalculationError(str(e))
 
     # ── Métodos de Lógica Interna ──────────────────────────────
 
