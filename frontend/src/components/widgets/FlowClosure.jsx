@@ -1,62 +1,39 @@
 import React from 'react';
-import { getNodeMeta } from '../../constants/flux';
-
-const CLOSURE_COPY = {
-  LOAN_REJECTED_POLICY: {
-    tone: 'warning',
-    title: 'Solicitud no aprobada',
-    body: 'La evaluacion finalizo por una politica financiera.'
-  },
-  LOAN_SECURITY_BLOCK: {
-    tone: 'danger',
-    title: 'Solicitud bloqueada',
-    body: 'Por seguridad, este flujo quedo bloqueado tras la validacion OTP.'
-  },
-  LOAN_CLOSED_BY_USER: {
-    tone: 'neutral',
-    title: 'Solicitud cerrada',
-    body: 'Decidiste no continuar con esta oferta.'
-  },
-  LOAN_COMPLETED: {
-    tone: 'success',
-    title: 'Credito completado',
-    body: 'La solicitud termino correctamente.'
-  }
-};
 
 export default function FlowClosure({ conversation }) {
-  const currentNode = conversation?.currentNode;
-  const flowResult = conversation?.flowResult ?? {};
-  const copy = CLOSURE_COPY[currentNode];
-
-  if (!copy) {
-    return null;
-  }
-
-  const nodeMeta = getNodeMeta(currentNode);
+  const offerData = conversation?.offerData?.loan || {};
+  const downloadUrl = offerData.file_contrato_path || offerData.display_data?.download_url;
 
   return (
-    <section className={`loan-widget closure-widget ${copy.tone}`} aria-label="Cierre del flujo">
-      <div className="widget-head">
-        <span className="status-label">{nodeMeta.label}</span>
-        <strong>{copy.title}</strong>
-        <p>{flowResult.reason ?? flowResult.close_reason ?? copy.body}</p>
-      </div>
-
-      <dl className="closure-grid">
-        <div>
-          <dt>Estado</dt>
-          <dd>{flowResult.status_code ?? flowResult.statusCode ?? currentNode}</dd>
+    <div className="flow-closure-card" style={{ padding: '20px', textAlign: 'center' }}>
+      <h3>🎉 ¡Trámite Finalizado!</h3>
+      <p>Tu crédito ha sido procesado con éxito y los fondos están en camino.</p>
+      
+      {downloadUrl && (
+        <div className="download-section" style={{ marginTop: '15px' }}>
+          <a 
+            href={downloadUrl} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="primary-button download-button"
+            style={{ 
+              textDecoration: 'none', 
+              display: 'inline-block', 
+              padding: '12px 24px',
+              backgroundColor: '#007bff',
+              color: 'white',
+              borderRadius: '8px',
+              fontWeight: 'bold'
+            }}
+          >
+            📥 Descargar Contrato (PDF)
+          </a>
         </div>
-        <div>
-          <dt>Motivo</dt>
-          <dd>{flowResult.close_reason ?? flowResult.closeReason ?? 'No informado'}</dd>
-        </div>
-        <div>
-          <dt>Producto</dt>
-          <dd>{flowResult.product_name ?? flowResult.productName ?? 'Credito de Consumo'}</dd>
-        </div>
-      </dl>
-    </section>
+      )}
+      
+      <small style={{ display: 'block', marginTop: '20px', color: '#888' }}>
+        ID de Operación: {conversation.id ? conversation.id.slice(0,8).toUpperCase() : 'N/A'}
+      </small>
+    </div>
   );
 }

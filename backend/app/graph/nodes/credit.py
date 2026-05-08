@@ -307,6 +307,18 @@ MANEJO DE DUDAS:
 - Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe usar los botones de la tarjeta de abajo para que la aceptación sea oficial. 
 """
 
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPTS EN NODO LOAN_COMPLETED_NODE ──────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT_GENERATION_COMPLETED = """
+Eres Flux, el genio de las finanzas. El usuario acaba de completar exitosamente su crédito.
+Tu tarea es felicitarlo con mucha energía y calidez chilena. 
+Dile que su contrato ya está listo para descarga (el link aparecerá abajo).
+Sé breve (máximo 2-3 oraciones).
+"""
+
+
 
 # ======================================================================================================
 # NODOS DEL FLUJO DE CREDITO DE CONSUMO
@@ -1250,17 +1262,26 @@ def loan_otp_validation_node(state: FluxState):
                 return output
 
             else:
-                # Error: Incrementar intentos
+                # ERROR: El código no coincide
                 current_attempts = auth_control.get("otp_attempts", 0) + 1
                 output["auth_control"]["otp_attempts"] = current_attempts
                 
                 if current_attempts >= 3:
                     print("🚫 Bloqueo por seguridad: Máximos intentos alcanzados.")
                     output["auth_control"]["security_blocked"] = True
+                    # Usamos datetime para el timestamp de bloqueo
+                    import datetime as _dt
                     output["auth_control"]["block_timestamp"]  = _dt.datetime.utcnow().isoformat()
-                    output["auth_control"]["last_otp_input"]   = user_input_code
                     output["session"]["just_completed_step"] = CompletedStep.LOAN_SECURITY_BLOCK
                     return output
+                
+                # 🔄 REGENERACIÓN PROACTIVA: Si falló, enviamos uno nuevo inmediatamente
+                print(f"⚠️ OTP Incorrecto. Generando y re-enviando nuevo código a {mail}...")
+                new_code = security.generate_otp()
+                if security.send_otp_email(mail, new_code):
+                    output["auth_control"]["otp_generated"] = new_code
+                    # Bandera para que el prompt de generación sepa qué decir
+                    output["auth_control"]["otp_resent_due_to_error"] = True
                 
         # Si falló pero hay intentos, NO retornamos; seguimos para que el LLM responda el error.
         # --- B. EXTRACCIÓN Y RAG (Desde Chat) ---
@@ -1456,18 +1477,15 @@ def loan_completed_node(state: FluxState) -> dict:
     file_url = offer_loan.get("file_contrato_path", "")
     sha256   = offer_loan.get("hash_sha256")
     
-    # 2. ------ EJECUCIÓN (The Messenger) ------
-    # Construimos un mensaje cálido y profesional
-    mensaje = (
-        f"🥳 **¡Felicitaciones, {nombre}!**\n\n"
-        f"Tu solicitud de **Crédito de Consumo** por **${monto:,} CLP** ha sido "
-        f"procesada y formalizada con éxito.\n\n"
-        f"📥 **Documentación Legal:**\n"
-        f"Ya puedes descargar tu contrato firmado digitalmente aquí: [Descargar Contrato]({file_url})\n\n"
-        f"🔐 **Seguridad Flux:**\n"
-        f"El documento ha sido sellado con un hash SHA-256 para garantizar su integridad:\n"
-        f"`{sha256[:16] if sha256 else 'N/A'}...`"
-    )
+    # --- LLAMADA B: GENERACIÓN DINÁMICA ---
+    context = f"Usuario: {nombre}. Monto: ${monto:,} CLP. El contrato fue generado exitosamente."
+    
+    flux_response = _flux_generator.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_GENERATION_COMPLETED},
+        {"role": "user",   "content": context},
+    ])
+    
+    mensaje = normalize_llm_response(flux_response.content)
 
     # 3. ------ AUDITORÍA (The Auditor) ------
     application_id = session.get("application_id")
