@@ -34,9 +34,9 @@ export default function Sidebar({
       <div className="sidebar-actions">
         <button className="primary-button" type="button" onClick={onNewConversation}>
           Nueva conversacion
-        </button>
+{/*         </button>
         <button className="secondary-button" type="button" onClick={onRefresh} disabled={loadingHistory}>
-          {loadingHistory ? 'Actualizando...' : 'Recargar historial'}
+          {loadingHistory ? 'Actualizando...' : 'Recargar historial'} */}
         </button>
       </div>
 
@@ -46,7 +46,7 @@ export default function Sidebar({
       </div>
 
       <div className="chat-history" aria-label="Historial de conversaciones">
-        <button
+        {/* <button
           className={`history-card ${selectedConversationId === '__draft__' ? 'selected' : ''}`}
           onClick={onNewConversation}
           type="button"
@@ -55,7 +55,7 @@ export default function Sidebar({
           <span>
             <strong>Nueva conversacion</strong>
           </span>
-        </button>
+        </button> */}
 
         {conversations.map((conversation) => (
           <button
@@ -75,11 +75,11 @@ export default function Sidebar({
         ))}
       </div>
 
-      <div className="sidebar-foot">
+      {/* <div className="sidebar-foot">
         <button className="secondary-button" type="button" disabled>
           Borrar conversacion
         </button>
-      </div>
+      </div> */}
     </aside>
   );
 }
