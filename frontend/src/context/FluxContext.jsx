@@ -605,7 +605,7 @@ export function FluxProvider({ accessToken, children }) {
         }
       });
 
-      await refreshHistory();
+      // await refreshHistory();
     } catch (error) {
       setAppError(error.message);
       appendLocalMessage(activeConversationId, {
@@ -665,11 +665,11 @@ export function FluxProvider({ accessToken, children }) {
 
 
   function sendLoanOfferAccepted() {
-    return sendAction('ACCEPT_OFFER');
+    // Al usar sendMessage, el mensaje aparecerá en el chat y se usará el API normal
+    return sendMessage("Acepto la oferta de crédito");
   }
-
   function sendLoanOfferRejected() {
-    return sendAction('REJECT_OFFER');
+    return sendMessage("Rechazo la oferta");
   }
 
 

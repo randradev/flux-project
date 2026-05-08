@@ -48,16 +48,15 @@ export default function LoanOfferCard({ conversation, disabled, onAccept, onReje
   return (
     <section className="loan-widget offer-widget" aria-label="Tarjeta de transparencia">
       <div className="widget-head">
-        <span className="status-label">Oferta pre-aprobada</span>
-        <strong>Tarjeta de Transparencia</strong>
-        <p>Condiciones recibidas desde el backend para tu Credito de Consumo.</p>
+        <strong>Oferta Pre Aprobada</strong>
+        <p>Revisa las condiciones de tu crédito pre aprobado con cuidado, ¡y cuéntanos si te acomoda!</p>
       </div>
 
-      {!hasOfferData && (
+{/*       {!hasOfferData && (
         <p className="widget-hint">
           El nodo `LOAN_PRE_APPROVED` esta activo, pero aun no llego un payload de oferta.
         </p>
-      )}
+      )} */}
 
       <dl className="offer-grid">
         {details.map(([label, value]) => (
@@ -68,14 +67,14 @@ export default function LoanOfferCard({ conversation, disabled, onAccept, onReje
         ))}
       </dl>
 
-      <div className="widget-actions">
+{/*       <div className="widget-actions">
         <button className="primary-button" type="button" onClick={onAccept} disabled={disabled}>
           Aceptar Oferta
         </button>
         <button className="secondary-button danger-button" type="button" onClick={onReject} disabled={disabled}>
           Rechazar/Cerrar
         </button>
-      </div>
+      </div> */}
     </section>
   );
 }
