@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import Brand from './Brand';
 import CreditWidgets from './widgets/CreditWidgets';
 import WelcomeMessage from './WelcomeMessage';
+import FluxLoadingFeedback from './FluxLoagingFeedback';
+
 
 function formatMessageTime(value) {
   if (!value) {
@@ -101,6 +103,10 @@ export default function ChatPanel({
             </div>
           </article>
         ))}
+
+        {sending && conversation?.messages?.at(-1)?.role === 'user' && (
+          <FluxLoadingFeedback />
+        )}
 
         <CreditWidgets
           conversation={conversation}
