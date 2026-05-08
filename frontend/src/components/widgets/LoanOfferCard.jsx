@@ -1,31 +1,28 @@
 import React from 'react';
 
+// 1. Actualizamos los formateadores para que acepten strings ya formateados
 function formatClp(value) {
-  if (value === null || value === undefined || value === '') {
-    return 'Pendiente';
-  }
-
+  if (value === null || value === undefined || value === '') return 'Pendiente';
+  if (typeof value === 'string' && value.includes('$')) return value; // Ya viene formateado
   return new Intl.NumberFormat('es-CL', {
     style: 'currency',
     currency: 'CLP',
     maximumFractionDigits: 0
   }).format(Number(value));
 }
-
 function formatPercent(value) {
-  if (value === null || value === undefined || value === '') {
-    return 'Pendiente';
-  }
-
+  if (value === null || value === undefined || value === '') return 'Pendiente';
+  if (typeof value === 'string' && value.includes('%')) return value; // Ya viene formateado
   return new Intl.NumberFormat('es-CL', {
     style: 'percent',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(Number(value));
 }
-
+// 2. Actualizamos la lectura para priorizar transparencyData
 function readLoanResult(conversation) {
   return (
+    conversation?.transparencyData?.loan ??
     conversation?.riskResults ??
     conversation?.evaluationResults?.loan_engine ??
     conversation?.evaluationResults?.loanEngine ??

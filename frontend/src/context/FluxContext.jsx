@@ -1,4 +1,5 @@
-﻿import React, { createContext, useEffect, useState } from 'react';
+import React, { createContext, useEffect, useState } from 'react';
+import { fetchEventSource } from '@microsoft/fetch-event-source';
 import {
   fetchConversationHistory,
   fetchConversationMessages,
@@ -7,6 +8,7 @@ import {
   apiBaseUrl
 } from '../services/api';
 import { getProductFromNode, getProductLabel, normalizeNodeId } from '../constants/flux';
+
 
 export const DRAFT_ID = '__draft__';
 
@@ -127,8 +129,8 @@ function readNodeFromPayload(payload) {
   );
 }
 
+// 1. Añadir este ayudante cerca de los otros (ej: después de readOfferData)
 function readTransparencyData(payload) {
-  // El backend emite transparency_data como namespace de primer nivel
   return payload.transparency_data ?? payload.transparencyData ?? null;
 }
 
@@ -272,18 +274,21 @@ export function FluxProvider({ accessToken, children }) {
           existing.currentNode &&
           existing.currentNode !== item.currentNode;
 
+        const snapshot = item.state_snapshot || {};
+
         return {
           ...item,
           messages: existing?.messages ?? [],
           detailLoaded: existing?.detailLoaded ?? false,
           // Preservamos el estado capturado para que no desaparezca al refrescar la lista
-          collectingData: existing?.collectingData ?? {},
-          evaluationResults: existing?.evaluationResults ?? {},
-          offerData: existing?.offerData ?? {},
-          transparencyData: existing?.transparencyData ?? {},
-          applicationId: existing?.applicationId ?? null,
-          productIntent: existing?.productIntent ?? item.productIntent,
-          currentNode: shouldKeepLiveNode ? existing.currentNode : item.currentNode,
+          // Priorizamos el estado 'existing' (en memoria) sobre el 'snapshot' (base de datos)
+          collectingData: existing?.collectingData ?? snapshot.collecting_data ?? {},
+          evaluationResults: existing?.evaluationResults ?? snapshot.evaluation_results ?? {},
+          offerData: existing?.offerData ?? snapshot.offer_data ?? {},
+          transparencyData: existing?.transparencyData ?? snapshot.transparency_data ?? {},
+          applicationId: existing?.applicationId ?? snapshot.session?.application_id ?? null,
+          productIntent: existing?.productIntent ?? snapshot.session?.product_intent ?? item.productIntent,
+          currentNode: shouldKeepLiveNode ? existing.currentNode : (snapshot.session?.current_node || item.currentNode),
           nodeSource: shouldKeepLiveNode ? 'stream' : item.nodeSource
         };
       });
@@ -413,7 +418,7 @@ export function FluxProvider({ accessToken, children }) {
       const productTitle = nextProductIntent ? getProductLabel(nextProductIntent) : conversation.title;
 
       // ── Nuevas lecturas (Fase 2) ──
-      const nextTransparencyData = readTransparencyData(payload);
+      const nextTransparencyData = mergeObjectPayload(conversation.transparencyData, readTransparencyData(payload));
       const nextCollectingData = readCollectingData(payload);
       const nextFriendlyLabel = readFriendlyLabel(payload);
       const nextProgressPercent = readProgressPercent(payload);
@@ -486,6 +491,37 @@ export function FluxProvider({ accessToken, children }) {
 
     setConversations((current) => appendMessageToConversation(current, conversationId, message));
   }
+
+  function handleStreamEvent(event, targetId) {
+    if (event.type === 'message') {
+      appendLocalMessage(targetId, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: event.content ?? '',
+        createdAt: new Date().toISOString(),
+        nodeAtTime: normalizeNodeId(event.node) ?? null
+      });
+    }
+
+    if (event.type === 'node_transition' || hasStatePayload(event)) {
+      updateConversationFromPayload(targetId, event);
+    }
+
+    if (event.type === 'done') {
+      console.log("Proceso completado para:", event.conversation_id);
+      setSelectedConversationId(event.conversation_id);
+      setConversations(prev => prev.map(c => 
+        c.id === DRAFT_ID ? { ...c, id: event.conversation_id } : c
+      ));
+      setSending(false);
+    }
+
+    if (event.type === 'error') {
+      setAppError(event.detail || 'Error en el stream.');
+      setSending(false);
+    }
+  }
+
 
   async function sendMessage(text, productIntent = null) {
     const cleanText = text.trim();
@@ -584,13 +620,58 @@ export function FluxProvider({ accessToken, children }) {
     }
   }
 
+  async function sendAction(action) {
+    
+    console.log("Intentando ejecutar acción:", action, "en conversación:", selectedConversationId);
+    
+    if (!selectedConversationId || selectedConversationId === DRAFT_ID) {
+        console.warn("Acción abortada: ID no válido o es DRAFT");
+        return;
+    }
+
+    setSending(true);
+    setAppError('');
+
+    try {
+      await fetchEventSource(`${apiBaseUrl}/api/v1/action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({
+          conversation_id: selectedConversationId,
+          action: action
+        }),
+        onmessage: (msg) => {
+          const event = JSON.parse(msg.data);
+          // ¡Aquí usamos el helper!
+          handleStreamEvent(event, selectedConversationId);
+        },
+        onerror: (err) => {
+          setAppError('Error al ejecutar la acción.');
+          setSending(false);
+        }
+      });
+      
+      await refreshHistory();
+    } catch (error) {
+      setAppError(error.message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+
+
   function sendLoanOfferAccepted() {
-    return sendMessage('ACEPTAR_OFERTA_CREDITO');
+    return sendAction('ACCEPT_OFFER');
   }
 
   function sendLoanOfferRejected() {
-    return sendMessage('RECHAZAR_OFERTA_CREDITO');
+    return sendAction('REJECT_OFFER');
   }
+
 
   function sendOtpCode(code) {
     return sendMessage(String(code ?? '').trim());
@@ -615,6 +696,8 @@ export function FluxProvider({ accessToken, children }) {
     refreshHistory,
     selectedConversation,
     selectedConversationId,
+    onAcceptLoanOffer: sendLoanOfferAccepted, 
+    onRejectLoanOffer: sendLoanOfferRejected,
     selectConversation,
     sendLoanOfferAccepted,
     sendLoanOfferRejected,

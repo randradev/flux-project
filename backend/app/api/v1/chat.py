@@ -77,6 +77,21 @@ _STATE_NAMESPACES = [
     "flow_result",
 ]
 
+# Mapeo de Acciones Directas (Bypass de LLM)
+# Formato: { PRODUCTO: { ACCION: { "node": "SIGUIENTE_NODO", "progress_flag": "campo_a_marcar" } } }
+DIRECT_ACTION_RULES = {
+    "LOAN": {
+        "ACCEPT_OFFER": {
+            "node": "LOAN_OTP_VALIDATION",
+            "progress_flag": "pre_approval_accepted"
+        },
+        "REJECT_OFFER": {
+            "node": "LOAN_CLOSED_BY_USER",
+            "progress_flag": "closed_by_user"
+        }
+    }
+}
+
 def build_node_transition_payload(
     node_name: str,
     node_output: dict,
@@ -128,6 +143,9 @@ class ChatMetadata(BaseModel):
     conversation_id: str | None = None
     product_intent: str | None = None
 
+class ActionRequest(BaseModel):
+    conversation_id: str
+    action: str
 
 # ── Generador de Streaming ────────────────────────────────────
 
@@ -135,7 +153,8 @@ async def stream_graph_response(
     user_message: str,
     user_profile: dict,
     thread_id: str,
-    product_intent: str | None = None, # <--- AGREGAR ESTO
+    product_intent: str | None = None, 
+    
 ):
     """
     Generador asíncrono que ejecuta el grafo y emite eventos SSE.
@@ -169,7 +188,7 @@ async def stream_graph_response(
 
     # 1. Hidratación Base
     initial_state = {
-        "messages": [HumanMessage(content=user_message)],
+        "messages": [{"type": "human", "content": user_message}],
         "user_data": {
             "user_id": str(user_profile.get("id", "")),
             "full_name": user_profile.get("full_name", ""),
@@ -190,6 +209,7 @@ async def stream_graph_response(
         initial_state["offer_data"] = db_snapshot.get("offer_data", {})
         initial_state["auth_control"] = db_snapshot.get("auth_control", {})
         initial_state["transparency_data"] = db_snapshot.get("transparency_data", {})
+        initial_state["messages"] = db_snapshot.get("messages", []) + [{"type": "human", "content": user_message}]
 
     # 3. Solo si hay una intención nueva (botón), forzamos el reset de sesión
     if product_intent:
@@ -205,92 +225,61 @@ async def stream_graph_response(
         initial_state["auth_control"] = {"security_blocked": False, "otp_attempts": 0}
         initial_state["transparency_data"] = {}
 
+    # --- BORRA DESDE AQUÍ (Línea 226 aprox) ---
     full_assistant_response = ""
     last_node = "START"
+    current_snapshot = initial_state.copy()
 
     try:
-        # Streaming del grafo: cada evento es una transición de nodo
-        # Cambios para adaptar el uso del grafo compilado: Importación y obtención de instancia
         compiled_graph = get_active_graph()
         async for event in compiled_graph.astream(initial_state, config=config):
-            
             for node_name, node_output in event.items():
                 last_node = node_name
+                
+                for key, val in node_output.items():
+                    if key == "messages":
+                        serializable_msgs = [m.dict() if hasattr(m, "dict") else m for m in val]
+                        current_snapshot["messages"] = current_snapshot.get("messages", []) + serializable_msgs
+                    else:
+                        current_snapshot[key] = val
+                
+                # 2. Guardar en la base de datos de inmediato
+                # 2. Guardar en la base de datos de inmediato
+                update_conversation_node(
+                    conversation_id=thread_id,
+                    current_node=last_node,
+                    state_snapshot=current_snapshot # Usamos el snapshot que ya actualizamos arriba
+                )
 
-                # Extraer mensajes del asistente del output del nodo
+                # 3. Emitir mensajes del asistente
                 messages = node_output.get("messages", [])
                 for msg in messages:
                     if hasattr(msg, "type") and msg.type == "ai":
                         content = msg.content
                         full_assistant_response += content
+                        yield f"data: {json.dumps({'type': 'message', 'content': content, 'node': node_name})}\n\n"
 
-                        # Emitir evento SSE con el contenido del mensaje
-                        sse_data = json.dumps({
-                            "type": "message",
-                            "content": content,
-                            "node": node_name,
-                        })
-                        yield f"data: {sse_data}\n\n"
-
-                # Emitir metadato de transición de nodo (para el Progress Monitor del FE) con namespaces completos
-                                # ── 2. Emitir transición de nodo con namespaces completos (Paso 1.3 y 1.4) ──
+                # 4. Emitir transiciones de nodo (Lo que pedía el frontend)
                 transition_payload = build_node_transition_payload(node_name, node_output)
-                
                 if transition_payload:
-                    # Enriquecer con labels y progreso antes de emitir cualquier cosa
                     transition_payload = enrich_payload_with_labels(transition_payload)
-                    
-                    # A. Si es un nodo ENGINE, pre-anunciar estado PROCESSING
                     if transition_payload.get("node") in _ENGINE_NODES:
-                        processing_event = {
-                            "type": "node_transition",
-                            "node": transition_payload["node"],
-                            "node_status": "PROCESSING",
-                            "product_intent": transition_payload.get("product_intent"),
-                            "friendly_label": transition_payload.get("friendly_label"),
-                            "progress_percent": transition_payload.get("progress_percent"),
-                        }
-                        yield f"data: {json.dumps(processing_event)}\n\n"
-                    
-                    # B. Emitir siempre el evento SUCCESS final con los namespaces
+                        yield f"data: {json.dumps({**transition_payload, 'node_status': 'PROCESSING'})}\n\n"
                     yield f"data: {json.dumps(transition_payload)}\n\n"
-
-                    # El evento SUCCESS con los namespaces se emite al finalizar el nodo (lógica anterior)
-                    
-                # Persistir respuesta del asistente en la DB
-                if full_assistant_response:
-                    save_message(
-                        conversation_id=thread_id,
-                        role="assistant",
-                        content=full_assistant_response,
-                        node_at_time=last_node,
-                    )
-
-# --- NUEVO: Sincronización centralizada de Estado y Producto ---
-        # Capturamos el estado final para la próxima vez
-        final_state = await compiled_graph.get_state(config)
-        state_values = final_state.values
-        
-        # Extraemos los valores reales de la sesión (que ya vienen en UPPER_CASE desde los nodos)
-        session_data = state_values.get("session", {})
-        current_product = session_data.get("product_intent")
-        current_node_upper = session_data.get("current_node", last_node.upper()) # Usamos el de la sesión o forzamos upper
-        from app.infra.supabase import update_conversation_node, update_conversation_product
-        
-        if current_product and current_product != "GENERAL":
-            update_conversation_product(thread_id, current_product)
-            
-        # IMPORTANTE: Guardamos el current_node_upper para que el ruteador lo reconozca al volver
-        update_conversation_node(
-            conversation_id=thread_id,
-            current_node=current_node_upper,
-            state_snapshot=state_values
-        )
-        yield f"data: {json.dumps({'type': 'done', 'conversation_id': thread_id})}\n\n"
-
+    
     except Exception as e:
-        error_data = json.dumps({"type": "error", "detail": str(e)})
-        yield f"data: {error_data}\n\n"
+        print(f"Error en stream: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
+    
+    if full_assistant_response:
+        save_message(
+            conversation_id=thread_id,
+            role="assistant",
+            content=full_assistant_response,
+            node_at_time=last_node,
+        )
+    
+    yield f"data: {json.dumps({'type': 'done', 'conversation_id': thread_id})}\n\n"
 
 
 # ── Endpoint Principal ────────────────────────────────────────
@@ -312,7 +301,7 @@ async def chat_endpoint(
     """
     print(f"\n[DEBUG-API] LLEGADA: ID={request.conversation_id}, INTENT={request.product_intent}")
     print(f"[DEBUG-API] MENSAJE: '{request.message}'")
-    
+
     user_id = str(user_profile.get("id"))
 
     try:
@@ -336,4 +325,73 @@ async def chat_endpoint(
             "X-Accel-Buffering": "no",  # Deshabilita buffering en nginx
             "X-Conversation-Id": thread_id,
         },
+    )
+
+@router.post("/action")
+async def action_endpoint(
+    request: ActionRequest,
+    user_profile: dict = Depends(get_verified_user),
+):
+    """
+    Ejecuta una acción de negocio directa (ej: Aceptar Oferta) sin pasar por el LLM.
+    Actualiza el estado en la DB y dispara la respuesta del siguiente nodo.
+    """
+    conv_id = request.conversation_id
+    action_key = request.action
+    # 1. Obtener snapshot actual desde la DB para saber dónde estamos
+    from app.infra.supabase import get_conversation_snapshot, update_conversation_node
+    snapshot = get_conversation_snapshot(conv_id)
+    
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="No se encontró la conversación.")
+    # 2. Identificar el Producto y buscar la regla
+    session = snapshot.get("session", {})
+    product = session.get("product_intent", "GENERAL")
+
+    # 3. CIRUGÍA: Actualizar estado manualmente
+    if product == "LOAN" and action_key == "ACCEPT_OFFER":
+        next_node = "LOAN_OTP"  # El siguiente paso es el OTP
+        flag = "pre_approval_accepted"
+    elif product == "ACCOUNT" and action_key == "ACCEPT_OFFER":
+        # Por si acaso, para otros productos
+        next_node = "ACCOUNT_OTP" 
+        flag = "pre_approval_accepted"
+    elif product == "DAP" and action_key == "ACCEPT_OFFER":
+        # Por si acaso, para otros productos
+        next_node = "DAPT_OTP" 
+        flag = "pre_approval_accepted"
+    # else:
+    #     # Por si acaso...
+    #     next_node = "WELCOME" 
+    #     flag = "unknown"
+    
+    # Marcamos el progreso (ej: pre_approval_accepted = True)
+    progress = session.get("progress", {})
+    if product == "LOAN":
+        # En crédito, estas flags van directo en el root del progress
+        progress[flag] = True
+        # Si aceptó, marcamos que el paso de pre-aprobación terminó con éxito
+        from app.graph.constants import CompletedStep
+        if action_key == "ACCEPT_OFFER":
+            session["just_completed_step"] = CompletedStep.LOAN_PRE_APPROVED
+    
+    session["progress"] = progress
+    session["current_node"] = next_node
+    snapshot["session"] = session
+    # 4. Persistir el cambio: Ahora la DB dice que estamos en el SIGUIENTE nodo
+    update_conversation_node(
+        conversation_id=conv_id,
+        current_node=next_node,
+        state_snapshot=snapshot
+    )
+    # 5. Disparar el Grafo: Como ya actualizamos la DB, al rehidratar 
+    # el Grafo despertará directamente en el nodo destino (ej: OTP).
+    return StreamingResponse(
+        stream_graph_response(
+            user_message=f"[ACCION_DIRECTA:{action_key}]", # Mensaje interno para logs
+            user_profile=user_profile,
+            thread_id=conv_id,
+            product_intent=None
+        ),
+        media_type="text/event-stream",
     )

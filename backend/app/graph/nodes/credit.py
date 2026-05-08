@@ -251,10 +251,9 @@ TAREA ACTUAL: Gestión de la oferta de crédito pre-aprobada.
 RESTRICCIONES:
 - Máximo 3 oraciones en tu respuesta.
 - No repitas los números técnicos en el texto (ya están en la tarjeta).
-- Refuerza SIEMPRE que la decisión (Aceptar/Rechazar) se toma exclusivamente con los botones de la tarjeta de transparencia. No aceptamos texto para formalizar.
 
 MANEJO DE DUDAS:
-- Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe usar los botones de la tarjeta de abajo para que la aceptación sea oficial.
+- Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe revisar los datos de la tarjeta de transparencia y responder para decidir si acepta o rechaza la oferta.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
@@ -1016,12 +1015,19 @@ def loan_pre_approved_node(state: FluxState) -> dict:
                 output["messages"] = [AIMessage(content=rag_response)]
                 # IMPORTANTE: No cambiamos de nodo, nos quedamos en PRE_APPROVED
                 return output
-            # 4. Lógica de Decisión (Keywords para máxima seguridad)
-            # Solo si NO fue pregunta, evaluamos la decisión
+            # 4. Lógica de Decisión (Máxima inteligencia y seguridad)
             msg_upper = last_user_msg.upper()
-            if msg_upper in ["ACEPTAR", "ACEPTO", "SI", "ACEPTA"]:
+            
+            # A. Prioridad 1: Confiar en el LLM (Lenguaje natural)
+            if extracted and extracted.decision == "ACCEPTED":
                 user_decision = "ACCEPTED"
-            elif msg_upper in ["RECHAZAR", "RECHAZO", "NO", "RECHAZA"]:
+            elif extracted and extracted.decision == "REJECTED":
+                user_decision = "REJECTED"
+                
+            # B. Prioridad 2: El Botón o las Keywords (Seguridad extra)
+            elif "[ACCION_DIRECTA:ACCEPT_OFFER]" in msg_upper or msg_upper in ["ACEPTAR", "ACEPTO", "SI", "ACEPTA"]:
+                user_decision = "ACCEPTED"
+            elif "[ACCION_DIRECTA:REJECT_OFFER]" in msg_upper or msg_upper in ["RECHAZAR", "RECHAZO", "NO", "RECHAZA"]:
                 user_decision = "REJECTED"
 
 
@@ -2019,13 +2025,12 @@ def _build_pre_approved_generation_context(
         comportamiento = (
             f"RE-PREGUNTA: El usuario ya tiene su oferta y ahora comenta: '{last_msg}'. "
             "NO celebres de nuevo. Responde su duda brevemente y dile que para avanzar "
-            "DEBE usar los botones de la tarjeta de transparencia. Sé firme pero amable."
         )
     else:
         # Este es el caso de "Turno 3" (Celebración)
         comportamiento = (
             "PRESENTACIÓN: Invita al usuario a revisar los detalles en la tarjeta de "
-            "transparencia y a decidir usando los botones."
+            "transparencia."
         )
 
     context = f"""

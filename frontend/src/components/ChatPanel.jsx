@@ -113,7 +113,7 @@ export default function ChatPanel({
           disabled={sending}
           onAcceptOffer={onAcceptLoanOffer}
           onRejectOffer={onRejectLoanOffer}
-          onSubmitOtp={onSubmitOtp}
+          // onSubmitOtp={onSubmitOtp}
         />
       </div>
 
