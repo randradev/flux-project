@@ -253,3 +253,20 @@ def block_user_security(user_id: str) -> bool:
         print(f"❌ Error intentando bloquear al usuario {user_id}: {e}")
         return False
 
+def update_conversation_product(conversation_id: str, product_code: str) -> None:
+    """Actualiza el tipo de producto vinculado a una conversación."""
+    try:
+        # Resolvemos el ID técnico (ej: 'LOAN') a su ID de base de datos
+        pt = supabase_client.table("product_types").select("id").eq("code", product_code).maybe_single().execute()
+        if pt and pt.data:
+            supabase_admin.table("conversations").update({"product_type_id": pt.data["id"]}).eq("id", conversation_id).execute()
+            print(f"DEBUG DB: Conversación {conversation_id} marcada como {product_code}")
+    except Exception as e:
+        print(f"ERROR persistiendo producto: {e}")
+
+def get_conversation_snapshot(conversation_id: str) -> dict | None:
+    """Recupera el snapshot del estado guardado para una conversación."""
+    response = supabase_admin.table("conversations").select("state_snapshot").eq("id", conversation_id).execute()
+    if response.data and len(response.data) > 0:
+        return response.data[0].get("state_snapshot")
+    return None

@@ -152,21 +152,25 @@ async def stream_graph_response(
     """
     config = get_langgraph_config(thread_id)
 
-    # Persistir mensaje del usuario en la DB
+    # Persistir mensaje del usuario en la DB para el historial
+    from app.infra.supabase import save_message
     save_message(
         conversation_id=thread_id,
         role="user",
         content=user_message,
     )
 
-# 1. Empezamos solo con el mensaje (Esto SIEMPRE se envía)
+    # --- NUEVO: Rehidratación de Memoria desde la DB ---
+    # Si no hay una intención nueva (es un mensaje de seguimiento), buscamos el último estado en la DB
+    db_snapshot = None
+    if not product_intent:
+        from app.infra.supabase import get_conversation_snapshot
+        db_snapshot = get_conversation_snapshot(thread_id)
+
+    # 1. Hidratación Base
     initial_state = {
         "messages": [HumanMessage(content=user_message)],
-    }
-    # 2. SOLO si hay una intención (vienes del Modal), inicializamos el resto.
-    # Si no hay product_intent, LangGraph recuperará TODO de la base de datos automáticamente.
-    if product_intent:
-        initial_state["user_data"] = {
+        "user_data": {
             "user_id": str(user_profile.get("id", "")),
             "full_name": user_profile.get("full_name", ""),
             "email": user_profile.get("email", ""),
@@ -175,20 +179,31 @@ async def stream_graph_response(
             "user_status": user_profile.get("user_statuses", {}).get("code", "ACTIVE"),
             "user_category": user_profile.get("user_categories", {}).get("code") if user_profile.get("user_categories") else None,
         }
+    }
+
+    # 2. Si hay un snapshot en la DB, lo inyectamos como base para que el Grafo no arranque en blanco
+    if db_snapshot:
+        # Inyectamos los namespaces críticos para que route_after_welcome sepa qué hacer
+        initial_state["session"] = db_snapshot.get("session", {})
+        initial_state["collecting_data"] = db_snapshot.get("collecting_data", {})
+        initial_state["evaluation_results"] = db_snapshot.get("evaluation_results", {})
+        initial_state["offer_data"] = db_snapshot.get("offer_data", {})
+        initial_state["auth_control"] = db_snapshot.get("auth_control", {})
+        initial_state["transparency_data"] = db_snapshot.get("transparency_data", {})
+
+    # 3. Solo si hay una intención nueva (botón), forzamos el reset de sesión
+    if product_intent:
         initial_state["session"] = {
             "conversation_id": thread_id,
             "product_intent": product_intent,
             "current_node": "START",
             "is_transversal_active": False,
         }
-        # Inicializamos los cajones de datos solo al empezar
         initial_state["collecting_data"] = {}
         initial_state["evaluation_results"] = {}
         initial_state["offer_data"] = {}
         initial_state["auth_control"] = {"security_blocked": False, "otp_attempts": 0}
         initial_state["transparency_data"] = {}
-        initial_state["flow_result"] = None
-    # NOTA: Se eliminaron "collected_data" y "control_flags" de la v1.0
 
     full_assistant_response = ""
     last_node = "START"
@@ -251,7 +266,26 @@ async def stream_graph_response(
                         node_at_time=last_node,
                     )
 
-        # Señal de fin del stream
+# --- NUEVO: Sincronización centralizada de Estado y Producto ---
+        # Capturamos el estado final para la próxima vez
+        final_state = await compiled_graph.get_state(config)
+        state_values = final_state.values
+        
+        # Extraemos los valores reales de la sesión (que ya vienen en UPPER_CASE desde los nodos)
+        session_data = state_values.get("session", {})
+        current_product = session_data.get("product_intent")
+        current_node_upper = session_data.get("current_node", last_node.upper()) # Usamos el de la sesión o forzamos upper
+        from app.infra.supabase import update_conversation_node, update_conversation_product
+        
+        if current_product and current_product != "GENERAL":
+            update_conversation_product(thread_id, current_product)
+            
+        # IMPORTANTE: Guardamos el current_node_upper para que el ruteador lo reconozca al volver
+        update_conversation_node(
+            conversation_id=thread_id,
+            current_node=current_node_upper,
+            state_snapshot=state_values
+        )
         yield f"data: {json.dumps({'type': 'done', 'conversation_id': thread_id})}\n\n"
 
     except Exception as e:
@@ -276,6 +310,9 @@ async def chat_endpoint(
         3. Inicia el streaming del grafo.
     OUTPUT: StreamingResponse con eventos SSE.
     """
+    print(f"\n[DEBUG-API] LLEGADA: ID={request.conversation_id}, INTENT={request.product_intent}")
+    print(f"[DEBUG-API] MENSAJE: '{request.message}'")
+    
     user_id = str(user_profile.get("id"))
 
     try:

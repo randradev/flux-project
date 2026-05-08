@@ -247,16 +247,19 @@ export function FluxProvider({ accessToken, children }) {
   }, [accessToken]);
 
   useEffect(() => {
-    if (selectedConversationId) {
+    // Si ya tenemos un ID seleccionado que NO es el draft, NO TOCAMOS NADA.
+    // Esto evita que el polling nos resetee el ID a mitad de una conversación.
+    if (selectedConversationId && selectedConversationId !== DRAFT_ID) {
       return;
     }
-
-    if (conversations.length) {
-      setSelectedConversationId(conversations[0].id);
-      return;
+    // Si estamos en DRAFT y hay conversaciones, seleccionamos la primera
+    if (!selectedConversationId || selectedConversationId === DRAFT_ID) {
+        if (conversations.length > 0) {
+            setSelectedConversationId(conversations[0].id);
+            return;
+        }
+        setSelectedConversationId(DRAFT_ID);
     }
-
-    setSelectedConversationId(DRAFT_ID);
   }, [conversations, selectedConversationId]);
 
   function mergeHistory(nextItems) {
@@ -273,16 +276,28 @@ export function FluxProvider({ accessToken, children }) {
           ...item,
           messages: existing?.messages ?? [],
           detailLoaded: existing?.detailLoaded ?? false,
-          productIntent: existing?.productIntent ?? null,
+          // Preservamos el estado capturado para que no desaparezca al refrescar la lista
+          collectingData: existing?.collectingData ?? {},
+          evaluationResults: existing?.evaluationResults ?? {},
+          offerData: existing?.offerData ?? {},
+          transparencyData: existing?.transparencyData ?? {},
+          applicationId: existing?.applicationId ?? null,
+          productIntent: existing?.productIntent ?? item.productIntent,
           currentNode: shouldKeepLiveNode ? existing.currentNode : item.currentNode,
           nodeSource: shouldKeepLiveNode ? 'stream' : item.nodeSource
         };
       });
 
+      // --- ESTO ES LO NUEVO: Preservar el DRAFT si existe ---
+      const draft = existingById.get(DRAFT_ID);
+      if (draft && !merged.find(m => m.id === DRAFT_ID)) {
+        merged.push(draft);
+      }
+
       const missingSelected =
         selectedConversationId &&
         selectedConversationId !== DRAFT_ID &&
-        current.find((item) => item.id === selectedConversationId) &&
+        // current.find((item) => item.id === selectedConversationId) &&
         !merged.find((item) => item.id === selectedConversationId);
 
       if (missingSelected) {
@@ -482,8 +497,20 @@ export function FluxProvider({ accessToken, children }) {
     setSending(true);
     setAppError('');
 
-    let activeConversationId = selectedConversationId || DRAFT_ID;
+    // --- FORZAR EL ID CORRECTO ---
+    // Si tenemos un ID seleccionado que NO es el draft, lo usamos. 
+    // Si no, mandamos null para que el backend cree uno.
+    const effectiveId = (selectedConversationId && selectedConversationId !== DRAFT_ID) 
+      ? selectedConversationId 
+      : null;
+    const payload = {
+      message: text,
+      conversation_id: effectiveId,
+      product_intent: productIntent
+    };
 
+    let activeConversationId = selectedConversationId || DRAFT_ID;
+    
     appendLocalMessage(activeConversationId, {
       id: crypto.randomUUID(),
       role: 'user',
@@ -522,9 +549,18 @@ export function FluxProvider({ accessToken, children }) {
             updateConversationFromPayload(targetConversationId, event);
           }
 
-          if (event.type === 'done' && event.conversation_id) {
-            activeConversationId = event.conversation_id;
+          if (event.type === 'done') {
+
+            console.log("Cambiando DRAFT a ID real:", event.conversation_id);
+            // 1. Actualizamos el ID seleccionado de inmediato
             setSelectedConversationId(event.conversation_id);
+    
+            // 2. ACTUALIZACIÓN CRÍTICA: Cambiamos el ID del draft en la lista local 
+            setConversations(prev => prev.map(c => 
+              c.id === DRAFT_ID ? { ...c, id: event.conversation_id } : c
+            ));
+            
+            setSending(false);
           }
 
           if (event.type === 'error') {

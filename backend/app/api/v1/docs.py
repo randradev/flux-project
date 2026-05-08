@@ -32,7 +32,7 @@ async def get_conversation_history(
     response = (
         supabase_client
         .table("conversations")
-        .select("id, product_type_id, current_node, is_active, created_at, updated_at, product_types(name)")
+        .select("id, product_type_id, current_node, is_active, created_at, updated_at, product_types(name, code)")
         .eq("user_id", user_id)
         .order("updated_at", desc=True)
         .limit(20)
