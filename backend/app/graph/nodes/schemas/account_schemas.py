@@ -1,5 +1,5 @@
 """
-Esquemas Pydantic para extracción estructurada en nodos de Crédito.
+Esquemas Pydantic para extracción estructurada en nodos de Cuenta Corriente.
 Usados con LLM.with_structured_output() en los nodos COLLECTING.
 
 DISEÑO v2.1:
@@ -11,13 +11,12 @@ DISEÑO v2.1:
 
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Literal
-import re
 
 
-class LoanProfileExtraction(BaseModel):
+class AccountProfileExtraction(BaseModel):
     """
-    Schema para LOAN_COLLECTING_PROFILE.
-    Mapea directamente a collecting_data["loan_profile"].
+    Schema para ACCOUNT_COLLECTING_PROFILE.
+    Mapea directamente a collecting_data["account_profile"].
     """
 
     intencion: Literal["DATO_FINANCIERO", "PREGUNTA", "SALUDO", "OTRO"] = Field(
@@ -73,96 +72,13 @@ class LoanProfileExtraction(BaseModel):
         if "TECNI" in v: return "TECNICO"
         if "POST" in v or "MAGI" in v or "DOCTO" in v: return "POSTGRADO"
         return v
-    '''
-    @field_validator("renta")
-    @classmethod
-    def renta_must_be_positive(cls, v: Optional[int]) -> Optional[int]:
-        """
-        Normaliza a None si el LLM retornó un valor centinela no positivo.
-        El LLM usa 0 como 'no sé pero debo dar un int'.
-        """
-        if v is not None and v <= 0:
-            return None
-        return v
-
-    @field_validator("antiguedad_laboral")
-    @classmethod
-    def antiguedad_must_be_non_negative(cls, v: Optional[int]) -> Optional[int]:
-        """
-        Normaliza a None si el LLM retornó 0 o -1 (centinela clásico para int ausente).
-        """
-        if v is not None and v <= 0:
-            return None
-        return v
-
-    @field_validator("nivel_estudios")
-    @classmethod
-    def clean_estudios(cls, v):
-        if v == "DESCONOCIDO":
-            return None
-        return v
-    '''
-
-class LoanSimExtraction(BaseModel):
-    """
-    Schema para LOAN_COLLECTING_SIMULATION.
-    Mapea directamente a collecting_data["loan_sim"].
-    """
-
-    intencion: Literal["DATO_FINANCIERO", "PREGUNTA", "SALUDO", "OTRO"] = Field(
-        description=(
-            "Clasificación del mensaje antes de extraer datos: "
-            "DATO_FINANCIERO si contiene monto solicitado o plazo solicitado. "
-            "PREGUNTA si el usuario hace una consulta (¿qué es el CAE?, ¿cómo funciona?). "
-            "SALUDO si es un saludo, despedida o frase social sin datos financieros. "
-            "OTRO para mensajes fuera de contexto que no encajan en las anteriores."
-        )
-    )
-    razonamiento: str = Field(
-        default="",
-        description="Justifica brevemente por qué extraes o dejas en null cada campo basándote SOLO en el mensaje actual."
-    )
-    monto_solicitado: Optional[int] = Field(
-        default=None,
-        description=(
-            "Monto del crédito en CLP (entero positivo). "
-            "Normalizar: '5 millones' → 5000000, '$3.500.000' → 3500000, "
-            "'un palo' → 1000000, '800 lucas' → 800000. "
-            "Si no fue mencionado, retornar null."
-        )
-    )
-    plazo_solicitado: Optional[int] = Field(
-        default=None,
-        description=(
-            "Número de cuotas en meses (entero positivo). "
-            "Convertir: '2 años' → 24, '1 año y medio' → 18. "
-            "Si no fue mencionado, retornar null."
-        )
-    )
     
-    @field_validator("monto_solicitado", mode="before")
-    @classmethod
-    def clean_monto(cls, v):
-        if isinstance(v, str):
-            # Quita puntos, signos de peso y espacios
-            clean_v = re.sub(r'[.$ ]', '', v)
-            return int(clean_v) if clean_v.isdigit() else None
-        return v
-    '''
-    @field_validator("monto_solicitado", "plazo_solicitado")
-    @classmethod
-    def must_be_positive(cls, v: Optional[int]) -> Optional[int]:
-        """Normaliza a None cualquier valor centinela no positivo."""
-        if v is not None and v <= 0:
-            return None
-        return v
-    '''
 
-class LoanDecisionExtraction(BaseModel):
+class AccountDecisionExtraction(BaseModel):
     decision: str = Field(description="ACCEPTED, REJECTED, PREGUNTA, u OTRO")
     razonamiento: str = Field(description="Breve explicación de la elección")
 
-class LoanOTPExtraction(BaseModel):
+class AccountOTPExtraction(BaseModel):
     """
     Extracción de intención en el paso de validación OTP.
     """
