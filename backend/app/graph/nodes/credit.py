@@ -1206,7 +1206,11 @@ def loan_otp_validation_node(state: FluxState):
             # Aquí podrías decidir si mandas a SERVICE_ERROR o reintentas
 
     # 3. ------ LÓGICA DE PROCESAMIENTO (Si NO es salto inicial) ------
-    user_msg = ""
+    #user_msg = ""
+
+    user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "").strip()
+
+    import re
 
     extracted = None
 
@@ -1214,6 +1218,11 @@ def loan_otp_validation_node(state: FluxState):
         # --- A. VALIDACIÓN PRIORITARIA (Desde Interfaz/Botón) ---
         # Si el frontend envió algo, esto manda sobre cualquier texto del chat
         user_input_code = auth_control.get("otp_user_input")
+
+        if not user_input_code:
+            match = re.search(r"\b\d{6}\b", user_msg)
+            user_input_code = match.group(0) if match else None
+            
         actual_code     = auth_control.get("otp_generated")
         if user_input_code is not None and user_input_code != "":
             # Limpiamos el input para que no se procese dos veces si el usuario escribe luego en chat
@@ -1256,7 +1265,6 @@ def loan_otp_validation_node(state: FluxState):
         # Si falló pero hay intentos, NO retornamos; seguimos para que el LLM responda el error.
         # --- B. EXTRACCIÓN Y RAG (Desde Chat) ---
         # Solo procesamos texto si realmente hay un mensaje del usuario (evita falsos positivos de comandos)
-        user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "").strip()
         
         if user_msg:
             raw_extraction = _flux_generator.invoke([
@@ -1299,8 +1307,7 @@ def loan_otp_validation_node(state: FluxState):
     # Agregamos la intención al contexto para que Flux sepa QUÉ hizo el usuario
     if extracted:
         context += f"\nINTENCIÓN DETECTADA EN CHAT: {extracted.intent}"
-        if extracted.intent == "OTP_CODE":
-            context += " (El usuario intentó darte el código por aquí, recuérdale la regla de la interfaz)."
+
     flux_response = _flux_generator.invoke([
         {"role": "system", "content": SYSTEM_PROMPT_GENERATION_OTP},
         {"role": "user",   "content": context},

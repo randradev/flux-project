@@ -34,13 +34,13 @@ export default function CreditWidgets({
         />
       )}
 
-      {currentNode === 'LOAN_OTP_VALIDATION' && (
+{/*       {currentNode === 'LOAN_OTP_VALIDATION' && (
         <OtpInput
           authControl={conversation?.authControl}
           disabled={disabled}
           onSubmit={onSubmitOtp}
         />
-      )}
+      )} */}
 
       {CLOSURE_NODES.has(currentNode) && <FlowClosure conversation={conversation} />}
     </div>
