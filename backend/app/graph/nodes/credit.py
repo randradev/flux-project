@@ -1269,19 +1269,15 @@ def loan_otp_validation_node(state: FluxState):
                 if current_attempts >= 3:
                     print("🚫 Bloqueo por seguridad: Máximos intentos alcanzados.")
                     output["auth_control"]["security_blocked"] = True
-                    # Usamos datetime para el timestamp de bloqueo
-                    import datetime as _dt
+                    # Asegúrate de que _dt esté disponible o usa datetime directamente
                     output["auth_control"]["block_timestamp"]  = _dt.datetime.utcnow().isoformat()
+                    output["auth_control"]["last_otp_input"]   = user_input_code
                     output["session"]["just_completed_step"] = CompletedStep.LOAN_SECURITY_BLOCK
                     return output
                 
-                # 🔄 REGENERACIÓN PROACTIVA: Si falló, enviamos uno nuevo inmediatamente
-                print(f"⚠️ OTP Incorrecto. Generando y re-enviando nuevo código a {mail}...")
-                new_code = security.generate_otp()
-                if security.send_otp_email(mail, new_code):
-                    output["auth_control"]["otp_generated"] = new_code
-                    # Bandera para que el prompt de generación sepa qué decir
-                    output["auth_control"]["otp_resent_due_to_error"] = True
+                # Al no haber nada aquí, el flujo sigue hacia la generación de respuesta del LLM
+                # avisándole al usuario que se equivocó, pero manteniendo el mismo código.
+
                 
         # Si falló pero hay intentos, NO retornamos; seguimos para que el LLM responda el error.
         # --- B. EXTRACCIÓN Y RAG (Desde Chat) ---
