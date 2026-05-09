@@ -13,12 +13,14 @@ export const PRODUCT_ICONS = {
 };
 
 export const NODE_ALIASES = {
+  // General
   welcome: 'WELCOME_NODE',
   intent_router: 'INTENT_ROUTER',
   loan_entry: 'LOAN_ENTRY_STUB',
   account_entry: 'ACCOUNT_ENTRY_STUB',
   dap_entry: 'DAP_ENTRY_STUB',
   general_response: 'GENERAL_RESPONSE',
+  // Crédito de Consumo
   loan_init: 'LOAN_INIT',
   loan_collecting_profile: 'LOAN_COLLECTING_PROFILE',
   loan_collecting_simulation: 'LOAN_COLLECTING_SIMULATION',
@@ -29,10 +31,22 @@ export const NODE_ALIASES = {
   loan_completed: 'LOAN_COMPLETED',
   loan_rejected_policy: 'LOAN_REJECTED_POLICY',
   loan_security_block: 'LOAN_SECURITY_BLOCK',
-  loan_closed_by_user: 'LOAN_CLOSED_BY_USER'
+  loan_closed_by_user: 'LOAN_CLOSED_BY_USER',
+  // Cuenta Corriente
+  account_init: 'ACCOUNT_INIT',
+  account_collecting_profile: 'ACCOUNT_COLLECTING_PROFILE',
+  account_evaluation_engine: 'ACCOUNT_EVALUATION_ENGINE',
+  account_pre_approved: 'ACCOUNT_PRE_APPROVED',
+  account_otp_validation: 'ACCOUNT_OTP_VALIDATION',
+  account_formalization: 'ACCOUNT_FORMALIZATION',
+  account_completed: 'ACCOUNT_COMPLETED',
+  account_rejected_policy: 'ACCOUNT_REJECTED_POLICY',
+  account_security_block: 'ACCOUNT_SECURITY_BLOCK',
+  account_closed_by_user: 'ACCOUNT_CLOSED_BY_USER'
 };
 
 export const NODE_DETAILS = {
+  // GENERAL
   WELCOME_NODE: {
     label: 'Recepcion',
     description: 'El backend saluda o retoma la conversacion.'
@@ -57,6 +71,7 @@ export const NODE_DETAILS = {
     label: 'Respuesta general',
     description: 'El backend respondio fuera de un flujo especifico.'
   },
+  // CRÉDITO DE CONSUMO
   LOAN_INIT: {
     label: 'Inicio credito',
     description: 'FLUX abre la solicitud de Credito de Consumo y prepara el perfil.'
@@ -100,6 +115,47 @@ export const NODE_DETAILS = {
   LOAN_CLOSED_BY_USER: {
     label: 'Cierre voluntario',
     description: 'El usuario decidio no continuar con la oferta.'
+  },
+  // CUENTA CORRIENTE
+  ACCOUNT_INIT: {
+    label: 'Inicio Cuenta',
+    description: 'Flux te da la bienvenida al flujo de apertura.'
+  },
+  ACCOUNT_COLLECTING_PROFILE: {
+    label: 'Perfil Financiero',
+    description: 'Recopilamos tus datos para elegir el mejor plan para ti.'
+  },
+  ACCOUNT_EVALUATION_ENGINE: {
+    label: 'Evaluación de Cuenta',
+    description: 'Nuestro motor está analizando tu perfil en tiempo real.'
+  },
+  ACCOUNT_PRE_APPROVED: {
+    label: 'Oferta de Cuenta',
+    description: '¡Tenemos un plan aprobado! Revisa los detalles de tu nueva cuenta.'
+  },
+  ACCOUNT_OTP_VALIDATION: {
+    label: 'Validación de Identidad',
+    description: 'Enviamos un código a tu email para firmar el contrato.'
+  },
+  ACCOUNT_FORMALIZATION: {
+    label: 'Generando Contrato',
+    description: 'Estamos sellando legalmente tu nueva cuenta corriente.'
+  },
+  ACCOUNT_COMPLETED: {
+    label: 'Cuenta Activada',
+    description: '¡Listo! Tu cuenta ya está operativa y tu contrato disponible.'
+  },
+  ACCOUNT_REJECTED_POLICY: {
+    label: 'Solicitud No Elegible',
+    description: 'Lamentablemente no podemos ofrecerte una cuenta en este momento.'
+  },
+  ACCOUNT_SECURITY_BLOCK: {
+    label: 'Bloqueo por Seguridad',
+    description: 'Acceso bloqueado tras varios intentos fallidos de validación.'
+  },
+  ACCOUNT_CLOSED_BY_USER: {
+    label: 'Solicitud Cerrada',
+    description: 'Has decidido no avanzar con la oferta por ahora.'
   }
 };
 
@@ -123,7 +179,8 @@ export const PHASE_ONE_STEPS = [
 
 export const PRODUCT_STEPS = {
   GENERAL: PHASE_ONE_STEPS,
-    LOAN: [
+  // CRÉDITO DE CONSUMO
+  LOAN: [
     {
       id: 'LOAN_INIT',
       label: 'Inicio',
@@ -187,7 +244,69 @@ export const PRODUCT_STEPS = {
       hidden: true,
       terminal: true
     }
+  ],
+  // CUENTA CORRIENTE
+  ACCOUNT: [
+    {
+      id: 'ACCOUNT_INIT',
+      label: 'Inicio',
+      description: 'Creación de la solicitud de cuenta.',
+      hidden: true
+    },
+    {
+      id: 'ACCOUNT_COLLECTING_PROFILE',
+      label: 'Perfil',
+      description: 'Renta, antigüedad y estudios.'
+    },
+    {
+      id: 'ACCOUNT_EVALUATION_ENGINE',
+      label: 'Evaluación',
+      description: 'Análisis de riesgo y asignación de plan.'
+    },
+    {
+      id: 'ACCOUNT_PRE_APPROVED',
+      label: 'Oferta',
+      description: 'Revisión de plan y beneficios.'
+    },
+    {
+      id: 'ACCOUNT_OTP_VALIDATION',
+      label: 'OTP',
+      description: 'Validación de identidad.'
+    },
+    {
+      id: 'ACCOUNT_FORMALIZATION',
+      label: 'Contrato',
+      description: 'Formalización digital.'
+    },
+    {
+      id: 'ACCOUNT_COMPLETED',
+      label: 'Completado',
+      description: 'Cuenta activada exitosamente.',
+      terminal: true
+    },
+    {
+      id: 'ACCOUNT_REJECTED_POLICY',
+      label: 'Rechazo',
+      description: 'Cierre por política.',
+      hidden: true,
+      terminal: true
+    },
+    {
+      id: 'ACCOUNT_SECURITY_BLOCK',
+      label: 'Bloqueo',
+      description: 'Cierre por seguridad.',
+      hidden: true,
+      terminal: true
+    },
+    {
+      id: 'ACCOUNT_CLOSED_BY_USER',
+      label: 'Cerrado',
+      description: 'Cierre voluntario.',
+      hidden: true,
+      terminal: true
+    }
   ]
+
 
 };
 
@@ -203,6 +322,13 @@ const LOAN_TERMINAL_NODES = new Set([
   'LOAN_REJECTED_POLICY',
   'LOAN_SECURITY_BLOCK',
   'LOAN_CLOSED_BY_USER'
+]);
+
+const ACCOUNT_TERMINAL_NODES = new Set([
+  'ACCOUNT_COMPLETED',
+  'ACCOUNT_REJECTED_POLICY',
+  'ACCOUNT_SECURITY_BLOCK',
+  'ACCOUNT_CLOSED_BY_USER'
 ]);
 
 export function normalizeNodeId(nodeId) {

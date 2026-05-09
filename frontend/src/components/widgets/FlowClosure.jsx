@@ -20,7 +20,7 @@ const CLOSURE_TYPES = {
     title: '👋 ¡Todo bien!',
     message: 'Cerramos la solicitud por acá. Si cambias de opinión, aquí te esperamos con la mejor energía.',
     showDownload: false
-  }
+  },
 };
 
 export default function FlowClosure({ conversation }) {
