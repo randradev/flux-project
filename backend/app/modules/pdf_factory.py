@@ -70,18 +70,28 @@ class PDFFactory:
             }
         
         elif product_type == "CUENTA_CORRIENTE":
+            # Extraemos los datos con los nombres exactos que envía el nodo de formalización
+            plan = data.get("final_category", "Plan Flux Digital")
+            costo = data.get("monthly_cost", 0)
+            linea = data.get("credit_line_amount", 0)
+            upgrade = "SÍ (Beneficio Profesional)" if data.get("has_upgrade") else "No aplica"
+
             return {
                 "titulo": "Contrato de Apertura Cuenta Corriente",
                 "resumen": [
-                    ("Plan Seleccionado", data.get("plan_nombre", "Plan Flux Digital")),
-                    ("Costo Mensual", "$0 (Costo Cero)"),
-                    ("Línea de Crédito", f"${data.get('linea_aprobada', 0):,}")
+                    ("Plan Seleccionado", f"Plan {plan}"),
+                    ("Costo Mensual", f"${costo:,} CLP"),
+                    ("Línea de Crédito", f"${linea:,} CLP"),
+                    ("Upgrade por Estudios", upgrade)
                 ],
                 "legal": [
-                    "• Sujeto a políticas de uso de cuenta corriente Flux.",
-                    "• Incluye tarjeta de débito digital activa."
+                    "Este documento certifica la apertura de cuenta corriente y línea de crédito.",
+                    "El cliente declara conocer las comisiones asociadas a su plan seleccionado.",
+                    "La línea de crédito está sujeta a los términos de uso de productos financieros Flux.",
+                    "Incluye tarjeta de débito digital activa de forma inmediata."
                 ]
             }
+
 
         # Fallback genérico
         return {

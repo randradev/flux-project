@@ -254,6 +254,17 @@ MANEJO DE DUDAS:
 - Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe usar los botones de la tarjeta de abajo para que la aceptación sea oficial. 
 """
 
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPTS EN NODO ACCOUNT_COMPLETED_NODE ──────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT_GENERATION_COMPLETED = """
+Eres Flux, el genio de las finanzas. El usuario acaba de completar exitosamente la contratación de su Cuenta Corriente en Flux.
+Tu tarea es felicitarlo con mucha energía y calidez chilena. 
+Dile que su contrato ya está listo para descarga (el link aparecerá abajo).
+Sé breve (máximo 2-3 oraciones).
+"""
+
 # ── ACCOUNT_INIT (account_init) ────────────────────────────
 
 def account_init_node(state: FluxState) -> dict:
@@ -1031,6 +1042,442 @@ def account_otp_validation_node(state: FluxState):
     output["session"]["just_completed_step"] = None
     
     return output
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# ACCOUNT_FORMALIZATION — Generación y Sellado del Contrato PDF
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def account_formalization_node(state: FluxState) -> dict:
+    """
+    Stub: ACCOUNT_FORMALIZATION.
+
+    Responsabilidades finales:
+      - Recopilar datos del motor y del usuario (nombre, rut).
+      - Generar el PDF del contrato con ReportLab.
+      - Calcular hash SHA-256 del PDF generado.
+      - Escribir en offer_data["account"]: file_contrato_path, hash_sha256, contract_status.
+      - Si SIGNED_AND_STAMPED: continuar a account_completed (via edge fijo).
+      - Si GENERATION_FAILED: redirigir a SERVICE_ERROR (futuro).
+    """
+    print("--- NODO: ACCOUNT_FORMALIZATION ---")
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    prep_data    = state.get("preparation_data", {})
+    account_engine  = state.get("evaluation_results", {}).get("account_engine", {})
+    session      = state.get("session", {})
+    offer_account  = state.get("offer_data", {}).get("account", {})
+    
+    # 2. ------ EJECUCIÓN (The Worker) ------
+    try:
+        factory = PDFFactory()
+        
+        # Construimos el payload alineado con los requerimientos de branding
+        payload = {
+            "nombre":               prep_data.get("nombre"),
+            "rut":                  prep_data.get("rut"),
+            "final_category":       account_engine.get("final_category"),
+            "has_upgrade":          account_engine.get("has_upgrade"),
+            "credit_line_amount":   account_engine.get("credit_line_amount"),
+            "monthly_cost":         account_engine.get("monthly_cost"),
+        }
+        
+        # A. Generación Local
+        local_path, security_hash = _pdf_factory.create_pdf("CUENTA_CORRIENTE", payload)
+        
+        # B. Subida a la Nube (Supabase Storage)
+        cloud_url = upload_contract_to_storage(local_path)
+        
+        if cloud_url:
+            final_path = cloud_url
+            contract_status = "SIGNED_AND_STAMPED"
+            completion_flag = CompletedStep.ACCOUNT_FORMALIZATION_SUCCESS
+        else:
+            raise Exception("No se pudo obtener la URL del storage")
+        
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO EN FORMALIZACIÓN: {e}")
+        final_path = None
+        security_hash = None
+        contract_status = "GENERATION_FAILED"
+        completion_flag = None # El ruteador se detendrá para intervención
+        
+    # 3. ------ PERSISTENCIA Y SEMÁFOROS (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="ACCOUNT_FORMALIZATION",
+            node_status="SUCCESS" if contract_status == "SIGNED_AND_STAMPED" else "FAILED",
+            engine_status="SUCCESS",
+            document_status="GENERATED" if cloud_url else "PENDING"
+        )
+        
+    # 4. ------ ACTUALIZACIÓN DE ESTADO (The State Manager) ------
+    # A. Progreso Histórico (Consistencia inter-turno)
+    current_progress = session.get("progress", {})
+    account_progress = current_progress.get("account", {})
+    updated_progress = {
+        **current_progress,
+        "account": {**account_progress, "contract_signed": True}
+    }
+    
+    # B. Consolidación de Oferta y Display para el Usuario
+    updated_offer_account = {
+        **offer_account,
+        "file_contrato_path": final_path,
+        "hash_sha256":        security_hash,
+        "contract_status":    contract_status,
+        "display_data": {
+            **offer_account.get("display_data", {}),
+            "download_url":  final_path,
+            "security_hash": security_hash,
+            "main_detail": f"Plan: {account_engine.get('final_category', 'Standard')}"
+        }
+    }
+    
+    # 5. ------ SALIDA SILENCIOSA (The Jump) ------
+    return {
+        "session": {
+            **session,
+            "current_node":        "ACCOUNT_FORMALIZATION",
+            "progress":           updated_progress,
+            "just_completed_step": completion_flag
+        },
+        "offer_data": {
+            **state.get("offer_data", {}),
+            "account": updated_offer_account
+        }
+        # Sin "messages": El nodo es invisible para el usuario
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# ACCOUNT_COMPLETED — Estado Final Exitoso
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def account_completed_node(state: FluxState) -> dict:
+    """
+    Nodo de Cierre Exitoso: El final del camino para la Cuenta Corriente.
+    
+    Responsabilidades:
+      - Consolidar la vista final para el usuario.
+      - Notificar éxito total en los semáforos de la DB.
+      - Registrar el resultado del flujo para analítica.
+    """
+    print("--- NODO: ACCOUNT_COMPLETED ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    session    = state.get("session", {})
+    prep_data  = state.get("preparation_data", {})
+    offer_account = state.get("offer_data", {}).get("account", {})
+    engine     = state.get("evaluation_results", {}).get("account_engine", {})
+    
+    nombre   = prep_data.get("nombre", "Cliente").split()[0]
+    categoria   = engine.get("final_category", "Medium")
+    file_url = offer_account.get("file_contrato_path", "")
+    sha256   = offer_account.get("hash_sha256")
+    
+    # --- LLAMADA B: GENERACIÓN DINÁMICA ---
+    context = f"Usuario: {nombre}. Plan Cuenta Corriente: {categoria}. El contrato fue generado exitosamente."
+    
+    flux_response = _flux_generator.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_GENERATION_COMPLETED},
+        {"role": "user",   "content": context},
+    ])
+    
+    mensaje = normalize_llm_response(flux_response.content)
+
+    # 3. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="ACCOUNT_COMPLETED",
+            node_status="SUCCESS",
+            engine_status="SUCCESS",
+            document_status="GENERATED"
+        )
+
+    # 4. ------ ACTUALIZACIÓN DE ESTADO (The State Manager) ------
+    # A. Resultado del Flujo (Analítica)
+    flow_result = {
+        "status_code":  "SUCCESS",
+        "close_reason": None,
+        "product_name": "Cuenta Corriente",
+        "closed_at":    _dt.datetime.utcnow().isoformat(),
+    }
+    
+    # B. Datos de Visualización Final (Frontend)
+    updated_display = {
+        "download_url":  file_url,
+        "main_detail":   f"Plan: {categoria}",
+        "security_hash": sha256,
+        "reason":        None
+    }
+    
+    # C. Consolidación de la Oferta
+    updated_offer_account = {
+        **offer_account,
+        "display_data": updated_display
+    }
+
+    # 5. ------ SALIDA (The Final Jump) ------
+    return {
+        "session": {
+            **session,
+            "current_node":      "ACCOUNT_COMPLETED",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": None, # Nodo terminal
+        },
+        "flow_result": flow_result,
+        "offer_data": {
+            **state.get("offer_data", {}),
+            "account": updated_offer_account
+        },
+        "messages": [AIMessage(content=mensaje)]
+    }
+
+# ======================================================================================================
+# NODOS MANEJO DE ERRORES Y EXCEPCIONES
+# ======================================================================================================
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# ACCOUNT_REJECTED_POLICY — Rechazo por Política de Cuenta Corriente
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+_REJECTION_MESSAGES = {
+    "ERR_EDAD":           "lamentablemente necesitas ser mayor de 18 años para solicitar una cuenta corriente con nosotros",
+    "ERR_RENTA":          "tu renta declarada está por debajo del mínimo que requerimos para este producto",
+    "ERR_ANTIGUEDAD":     "necesitas al menos 6 meses de antigüedad laboral para acceder a este producto",
+}
+
+def account_rejected_policy_node(state: FluxState) -> dict:
+    """
+    Nodo de Rechazo por Política: Entrega la noticia con empatía vía LLM.
+    """
+    print("--- NODO: ACCOUNT_REJECTED_POLICY ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN ------
+    session   = state.get("session", {})
+    prep_data = state.get("preparation_data", {})
+    engine    = state.get("evaluation_results", {}).get("account_engine", {})
+    
+    nombre    = prep_data.get("nombre", "Cliente").split()[0]
+    motivo    = engine.get("motivo_rechazo", "ERR_RENTA")
+    
+    # 2. ------ GENERACIÓN DE MENSAJE EMPÁTICO ------
+    razon_tecnica = _REJECTION_MESSAGES.get(motivo, "no cumplimos con los filtros mínimos de riesgo")
+    
+    # Identidad de marca mucho más definida
+    system_identity = (
+        "Eres Flux, un asistente bancario joven, optimista y directo. "
+        "Tu estilo es chileno coloquial pero profesional (usas palabras como 'pucha', 'fome', 'dale', 'buenazo'). "
+        "Eres breve, vas al grano y evitas sonar condescendiente o melancólico."
+    )
+    
+    instruction = (
+        f"Hola Flux. Cuéntale a {nombre} que su solicitud de cuenta corriente NO pasó esta vez. "
+        f"La razón es: {razon_tecnica}. "
+        f"Sé súper breve (máximo 2 párrafos cortos). No pidas perdón ni suenes triste, "
+        f"dilo de forma optimista, como una pausa y no un rechazo eterno. "
+        f"¡Mantén la energía arriba!"
+    )
+    
+    response = _flux_generator.invoke([
+        {"role": "system", "content": system_identity},
+        {"role": "user",   "content": instruction}
+    ])
+    mensaje_final = normalize_llm_response(response.content)
+
+
+    # 3. ------ PERSISTENCIA Y SEMÁFOROS ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="ACCOUNT_REJECTED_POLICY",
+            node_status="SUCCESS", # El proceso de rechazo se ejecutó bien
+            engine_status="COMPLETED"
+        )
+
+    # 4. ------ SALIDA ------
+    return {
+        "session": {
+            **session,
+            "current_node": "ACCOUNT_REJECTED_POLICY",
+            "just_completed_step": None # Nodo terminal
+        },
+        "flow_result": {
+            "status_code":  "REJECTED",
+            "close_reason": motivo,
+            "product_name": "Cuenta Corriente",
+            "closed_at":    _dt.datetime.utcnow().isoformat(),
+        },
+        "offer_data": {
+            **state.get("offer_data", {}),
+            "account": {
+                **state.get("offer_data", {}).get("account", {}),
+                "display_data": {
+                    "reason": razon_tecnica,
+                    "download_url": None
+                }
+            }
+        },
+        "messages": [AIMessage(content=mensaje_final)]
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# ACCOUNT_SECURITY_BLOCK — Bloqueo por Múltiples Intentos OTP Fallidos
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def account_security_block_node(state: FluxState) -> dict:
+    """
+    Nodo Terminal: Bloqueo de seguridad tras 3 intentos fallidos de OTP.
+    """
+    print("--- NODO: ACCOUNT_SECURITY_BLOCK ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    session      = state.get("session", {})
+    user_data    = state.get("user_data", {})
+    auth_control = state.get("auth_control", {})
+    nombre       = state.get("preparation_data", {}).get("nombre", "Cliente").split()[0]
+    user_id      = user_data.get("user_id")
+    now_iso      = _dt.datetime.utcnow().isoformat()
+    
+    # 2. ------ EJECUCIÓN (The Warden) ------
+    # Bloqueo persistente en la DB (usando el nuevo helper)
+    if user_id:
+        block_user_security(user_id)
+        
+    mensaje = (
+        f"🔒 **{nombre}, lo sentimos mucho.**\n\n"
+        f"Hemos detectado múltiples intentos fallidos de validación de identidad. "
+        f"Por tu seguridad, **esta solicitud y tu acceso a Flux han sido bloqueados temporalmente**.\n\n"
+        f"Recibirás un correo electrónico en breve con los pasos necesarios para verificar tu cuenta "
+        f"y recuperar el acceso. Si crees que esto es un error, por favor contáctanos de inmediato."
+    )
+
+    # 3. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="ACCOUNT_SECURITY_BLOCK",
+            node_status="BLOCKED", # <--- Estado de semáforo específico
+            engine_status="FAILED"
+        )
+
+    # 4. ------ SALIDA TERMINAL (The End) ------
+    return {
+        "session": {
+            **session,
+            "current_node": "ACCOUNT_SECURITY_BLOCK",
+            "just_completed_step": None # Flag terminal
+        },
+        "auth_control": {
+            **auth_control,
+            "security_blocked": True,
+            "block_timestamp":  now_iso,
+            "error_detail": "Máximo de intentos OTP superado."
+        },
+        "flow_result": {
+            "status_code":  "SECURITY_BLOCKED",
+            "close_reason": "OTP_LIMIT_EXCEEDED",
+            "product_name": "Cuenta Corriente",
+            "closed_at":    now_iso,
+        },
+        "messages": [AIMessage(content=mensaje)]
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# ACCOUNT_CLOSED_BY_USER — Cierre Voluntario (Usuario rechazó la oferta)
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def account_closed_by_user_node(state: FluxState) -> dict:
+    """
+    Nodo Terminal: El usuario rechaza formalmente la oferta de cuenta corriente.
+    """
+    print("--- NODO: ACCOUNT_CLOSED_BY_USER ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    session      = state.get("session", {})
+    prep_data    = state.get("preparation_data", {})
+    engine       = state.get("evaluation_results", {}).get("account_engine", {})
+    offer_account   = state.get("offer_data", {}).get("account", {})
+    
+    nombre       = prep_data.get("nombre", "Cliente").split()[0]
+    final_category       = engine.get("final_category", "Medium")
+    now_iso      = _dt.datetime.utcnow().isoformat()
+
+    # 2. ------ GENERACIÓN DE MENSAJE (The Farewell) ------
+    # Usamos LLM para una despedida personalizada y cálida (Toque Flux)
+    system_identity = (
+        "Eres Flux, un asistente bancario joven, optimista y directo. "
+        "Tu estilo es chileno coloquial pero profesional ('dale', 'buenazo', 'no te preocupes')."
+    )
+    
+    instruction = (
+        f"Hola Flux. El usuario {nombre} acaba de rechazar nuestra oferta de cuenta corriente para el Plan {final_category}. "
+        f"Despídete de forma muy breve (máximo 2 líneas), dile que no hay drama "
+        f"y que aquí estarás cuando lo necesite. Sé buena onda y relajado."
+    )
+    
+    response = _flux_generator.invoke([
+        {"role": "system", "content": system_identity},
+        {"role": "user",   "content": instruction}
+    ])
+    mensaje_final = normalize_llm_response(response.content)
+
+    # 3. ------ PERSISTENCIA HISTÓRICA (The Progress Tracker) ------
+    current_progress = session.get("progress", {})
+    account_progress = current_progress.get("account", {})
+    updated_progress = {
+        **current_progress,
+        "account": {**account_progress, "user_rejected_offer": True}
+    }
+
+    # 4. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="ACCOUNT_CLOSED_BY_USER",
+            node_status="REJECTED_BY_USER",
+            engine_status="SUCCESS"
+        )
+
+    # 5. ------ SALIDA (The Final State) ------
+    return {
+        "session": {
+            **session,
+            "current_node": "ACCOUNT_CLOSED_BY_USER",
+            "previous_node": session.get("current_node"),
+            "progress": updated_progress,
+            "just_completed_step": None # Flag terminal
+        },
+        "flow_result": {
+            "status_code":  "CLOSED_BY_USER",
+            "close_reason": "USER_REJECTED_OFFER",
+            "product_name": "Cuenta Corriente",
+            "closed_at":    now_iso,
+        },
+        "offer_data": {
+            **state.get("offer_data", {}),
+            "account": {
+                **offer_account,
+                "display_data": {
+                    **offer_account.get("display_data", {}),
+                    "reason": "USER_REJECTED_OFFER",
+                    "main_detail": f"Plan rechazado: {final_category}",
+                    "download_url": None
+                }
+            }
+        },
+        "messages": [AIMessage(content=mensaje_final)]
+    }
 
 # ======================================================================================================
 # HELPERS DEL FLUJO DE ACCOUNT
