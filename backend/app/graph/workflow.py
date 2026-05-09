@@ -27,11 +27,11 @@ NOMENCLATURA (Regla de Oro de este archivo):
   ├──────────────────────────┼──────────────────────────────┤
   │ welcome                  │ WELCOME_NODE                 │
   │ intent_router            │ INTENT_ROUTER                │
-  │ loan_init               │ LOAN_INIT                    │
+  │ loan_init                │ LOAN_INIT                    │
   │ loan_risk_engine         │ LOAN_RISK_ENGINE             │
-  │ account_init            │ ACCOUNT_INIT                 │
+  │ account_init             │ ACCOUNT_INIT                 │
   │ account_evaluation_engine│ ACCOUNT_EVALUATION_ENGINE    │
-  │ dap_init                │ DAP_INIT                     │
+  │ dap_init                 │ DAP_INIT                     │
   │ dap_investment_engine    │ DAP_INVESTMENT_ENGINE        │
   │ general_response         │ GENERAL_RESPONSE             │
   └──────────────────────────┴──────────────────────────────┘
@@ -66,7 +66,18 @@ from app.graph.nodes.account import (
     account_security_block_node,
     account_closed_by_user_node,
 )
-from app.graph.nodes.deposit import dap_init_node, dap_collect_data_node, dap_investment_engine_node
+from app.graph.nodes.deposit import (
+    dap_init_node,
+    dap_collect_data_node,
+    dap_investment_engine_node,
+    dap_pre_approved_node,
+    dap_otp_validation_node,
+    dap_formalization_node,
+    dap_completed_node,
+    dap_rejected_policy_node,
+    dap_security_block_node,
+    dap_closed_by_user_node,
+)
 from app.graph.edges import (
     route_after_welcome,
     route_after_intent,
@@ -83,6 +94,12 @@ from app.graph.edges import (
     route_after_account_pre_approved,
     route_after_account_otp_validation,
     route_after_account_formalization,
+    # Depósito a Plazo
+    route_after_dap_collecting_data,
+    route_after_dap_investment_engine,
+    route_after_dap_pre_approved,
+    route_after_dap_otp_validation,
+    route_after_dap_formalization,
 )
 from app.infra.checkpointer import get_checkpointer
 
@@ -133,6 +150,13 @@ def build_graph() -> StateGraph:
     │ dap_init                     │ DAP_INIT                         │
     │ dap_collect_data             │ DAP_COLLECT_DATA                 │
     │ dap_investment_engine        │ DAP_INVESTMENT_ENGINE            │
+    │ dap_pre_approved             │ DAP_PRE_APPROVED                 │
+    │ dap_otp_validation           │ DAP_OTP_VALIDATION               │
+    │ dap_formalization            │ DAP_FORMALIZATION                │
+    │ dap_completed                │ DAP_COMPLETED                    │
+    │ dap_rejected_policy          │ DAP_REJECTED_POLICY              │
+    │ dap_security_block           │ DAP_SECURITY_BLOCK               │
+    │ dap_closed_by_user           │ DAP_CLOSED_BY_USER               │
     │ general_response             │ GENERAL_RESPONSE                 │
     └──────────────────────────────┴──────────────────────────────────┘
     """
@@ -180,9 +204,20 @@ def build_graph() -> StateGraph:
     graph.add_node("account_closed_by_user",     account_closed_by_user_node)
 
     # ── Depósito a Plazo ─────────────────────────────────────────────
+    # Recolección
     graph.add_node("dap_init",                   dap_init_node)
-    graph.add_node("dap_collect_data",           dap_collect_data_node) # placeholder
+    graph.add_node("dap_collect_data",           dap_collect_data_node)
+    # Evaluación y Oferta
     graph.add_node("dap_investment_engine",      dap_investment_engine_node)
+    graph.add_node("dap_pre_approved",           dap_pre_approved_node)
+    # Formalización y Cierre
+    graph.add_node("dap_otp_validation",         dap_otp_validation_node)
+    graph.add_node("dap_formalization",          dap_formalization_node)
+    graph.add_node("dap_completed",              dap_completed_node)
+    # Excepciones
+    graph.add_node("dap_rejected_policy",        dap_rejected_policy_node)
+    graph.add_node("dap_security_block",         dap_security_block_node)
+    graph.add_node("dap_closed_by_user",         dap_closed_by_user_node)
 
     # ──────────────────────────────────────────────────────────────────────────────────────
     # PUNTO DE ENTRADA
@@ -214,6 +249,8 @@ def build_graph() -> StateGraph:
             "loan_otp_validation":         "loan_otp_validation",
             "account_pre_approved":        "account_pre_approved",
             "account_otp_validation":      "account_otp_validation",
+            "dap_pre_approved":            "dap_pre_approved",
+            "dap_otp_validation":          "dap_otp_validation",
             # Saltos por éxito (desde _SUCCESS_MAP vía P1)
             "loan_risk_engine":            "loan_risk_engine",
             "loan_formalization":          "loan_formalization",
@@ -227,6 +264,11 @@ def build_graph() -> StateGraph:
             "account_security_block":      "account_security_block",
             "account_closed_by_user":      "account_closed_by_user",
             "dap_investment_engine":       "dap_investment_engine",
+            "dap_formalization":           "dap_formalization",
+            "dap_completed":               "dap_completed",
+            "dap_rejected_policy":         "dap_rejected_policy",
+            "dap_security_block":          "dap_security_block",
+            "dap_closed_by_user":          "dap_closed_by_user",
             # General
             "general_response":            "general_response",
         }
@@ -390,16 +432,71 @@ def build_graph() -> StateGraph:
     # ──────────────────────────────────────────────────────────────────────────────────────
     # RUTAS DE DEPÓSITO A PLAZO
     # ──────────────────────────────────────────────────────────────────────────────────────
-    # DAP: dap_collect_data ya tiene edge fijo a dap_investment_engine
-    # (DAP no tiene paso de perfil separado, el salto ocurre diferente)
-    # graph.add_edge("dap_collect_data", "dap_investment_engine") — mantener
-    graph.add_edge("dap_init",                   "dap_collect_data")
-    graph.add_edge("dap_collect_data",           "dap_investment_engine")
-    graph.add_edge("dap_investment_engine",      END)
-    # General
-    graph.add_edge("general_response",          END)
+    # dap_init → dap_collect_data (NO va a END)
+    # Razón: dap_init es un nodo de bienvenida automático que no espera input.
+    # Transiciona directamente al primer nodo de recolección en el mismo turno.
+    graph.add_edge("dap_init", "dap_collect_data")
 
-    return graph
+    # Recolección de datos (con salto condicional al completarse)
+    graph.add_conditional_edges(
+        "dap_collect_data",
+        route_after_dap_collecting_data,
+        {
+            "dap_investment_engine": "dap_investment_engine",
+            END: END,
+        }
+    )
+
+    # Motor de inversión (bifurcación: aprobado / rechazado)
+    graph.add_conditional_edges(
+        "dap_investment_engine",
+        route_after_dap_investment_engine,
+        {
+            "dap_pre_approved":    "dap_pre_approved",
+            "dap_rejected_policy": "dap_rejected_policy",
+        }
+    )
+
+    # Oferta (bifurcación: aceptada / rechazada por usuario)
+    graph.add_conditional_edges(
+        "dap_pre_approved",
+        route_after_dap_pre_approved,
+        {
+            "dap_otp_validation":  "dap_otp_validation",
+            "dap_closed_by_user":  "dap_closed_by_user",
+            END: END,  # Espera turno del usuario
+        }
+    )
+
+    # Validación OTP (bifurcación: éxito / bloqueo de seguridad)
+    graph.add_conditional_edges(
+        "dap_otp_validation",
+        route_after_dap_otp_validation,
+        {
+            "dap_formalization":   "dap_formalization",
+            "dap_security_block":  "dap_security_block",
+            END: END,  # Espera turno del usuario (código incorrecto, reintento)
+        }
+    )
+
+    # Formalización → Completado (bifurcación condicional)
+    graph.add_conditional_edges(
+        "dap_formalization",
+        route_after_dap_formalization,
+        {
+            "dap_completed": "dap_completed",
+            END: END,
+        }
+    )
+
+    # Nodos terminales → END
+    graph.add_edge("dap_completed",       END)
+    graph.add_edge("dap_rejected_policy", END)
+    graph.add_edge("dap_security_block",  END)
+    graph.add_edge("dap_closed_by_user",  END)
+
+    # General
+    graph.add_edge("general_response", END)
 
 # ======================================================================================================
 # COMPILACIÓN DEL GRAFO

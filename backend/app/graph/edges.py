@@ -56,7 +56,13 @@ _RESUME_MAP = {
     
     # Depósito a Plazo
     "DAP_INIT":                    "dap_init",
-    "DAP_COLLECT_DATA":            "dap_collect_data",
+    "DAP_COLLECTING_DATA":         "dap_collect_data",
+    # Depósito a Plazo — Evaluación y Oferta
+    "DAP_PRE_APPROVED":            "dap_pre_approved",
+    "DAP_OTP_VALIDATION":          "dap_otp_validation",
+    # NOTA: DAP_INVESTMENT_ENGINE y DAP_FORMALIZATION son nodos de servicio automáticos.
+    # No tienen reanudación por turno: si el proceso se interrumpe en ellos,
+    # la reanudación ocurre vía _SUCCESS_MAP desde el paso previo.
 }
 
 # Mapa de intención inicial: product_intent → ID LangGraph
@@ -96,6 +102,13 @@ _VALID_DESTINATION_NODES: frozenset[str] = frozenset({
     "dap_init",
     "dap_collect_data",
     "dap_investment_engine",
+    "dap_pre_approved",
+    "dap_otp_validation",
+    "dap_formalization",
+    "dap_completed",
+    "dap_rejected_policy",
+    "dap_security_block",
+    "dap_closed_by_user",
     # Transversales
     "intent_router",
     "general_response",
@@ -128,7 +141,15 @@ _SUCCESS_MAP: dict[str, dict[str, str]] = {
         CompletedStep.ACCOUNT_SECURITY_BLOCK:        "account_security_block",
     },
     "DAP": {
-        CompletedStep.DAP_DATA: "dap_investment_engine",
+        CompletedStep.DAP_DATA:                  "dap_investment_engine",
+        CompletedStep.DAP_INVESTMENT_SUCCESS:    "dap_pre_approved",
+        CompletedStep.DAP_PRE_APPROVED:          "dap_otp_validation",
+        CompletedStep.DAP_OTP_SUCCESS:           "dap_formalization",
+        CompletedStep.DAP_FORMALIZATION_SUCCESS: "dap_completed",
+
+        CompletedStep.DAP_INVESTMENT_REJECTED:   "dap_rejected_policy",
+        CompletedStep.DAP_CLOSED_BY_USER:        "dap_closed_by_user",
+        CompletedStep.DAP_SECURITY_BLOCK:        "dap_security_block",
     },
 }
 
@@ -214,8 +235,33 @@ def _get_completed_steps_for_product(state: dict, product: str) -> list[str]:
             completed.append(CompletedStep.ACCOUNT_FORMALIZATION_SUCCESS)
     
     elif product == "DAP":
+        # A. Recolección
         if product_progress.get("data_completed"):
             completed.append(CompletedStep.DAP_DATA)
+
+        # B. Evaluación
+        if product_progress.get("investment_engine_completed"):
+            engine_status = state.get("evaluation_results", {}).get("dap_engine", {}).get("status_proceso")
+            if engine_status == "PRE_APPROVED":
+                completed.append(CompletedStep.DAP_INVESTMENT_SUCCESS)
+            else:
+                completed.append(CompletedStep.DAP_INVESTMENT_REJECTED)
+
+        # C. Oferta y OTP
+        if product_progress.get("pre_approval_accepted"):
+            completed.append(CompletedStep.DAP_PRE_APPROVED)
+        elif product_progress.get("closed_by_user"):
+            completed.append(CompletedStep.DAP_CLOSED_BY_USER)
+
+        if product_progress.get("otp_validated"):
+            completed.append(CompletedStep.DAP_OTP_SUCCESS)
+        elif state.get("auth_control", {}).get("security_blocked"):
+            completed.append(CompletedStep.DAP_SECURITY_BLOCK)
+
+        # D. Formalización (Final del flujo)
+        if product_progress.get("contract_signed"):
+            completed.append(CompletedStep.DAP_FORMALIZATION_SUCCESS)
+
     return completed
 
 # ==================================================================================
@@ -527,7 +573,6 @@ def route_after_account_otp_validation(state: FluxState) -> str:
 
     return END  # Código incorrecto: esperar reintento del usuario
 
-
 def route_after_account_formalization(state: FluxState) -> str:
     """
     Decisión de arista post-account_formalization.
@@ -538,5 +583,122 @@ def route_after_account_formalization(state: FluxState) -> str:
 
     if just_completed == CompletedStep.ACCOUNT_FORMALIZATION_SUCCESS:
         return "account_completed"
+
+    return END  # Si falló (None), el flujo se detiene por seguridad.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DECISIONES DE ARISTAS NODOS DE DEPÓSITO A PLAZO
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def route_after_dap_collecting_data(state: FluxState) -> str:
+    """
+    Decisión de arista post-dap_collect_data.
+
+    Si los datos de inversión se completaron (just_completed_step = DAP_DATA),
+    salta directamente al motor de inversión en el mismo turno.
+    Si no, va a END para esperar el siguiente mensaje del usuario.
+
+    NOTA: No se usa progress aquí deliberadamente; just_completed_step es
+    la señal más fresca y específica del turno actual.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.DAP_DATA:
+        return "dap_investment_engine"
+    return END
+
+
+def route_after_dap_investment_engine(state: FluxState) -> str:
+    """
+    Decisión de arista post-dap_investment_engine.
+
+    El motor de inversión es un nodo de servicio automático: siempre completa
+    su trabajo en el mismo turno y emite exactamente uno de dos CompletedStep:
+      - DAP_INVESTMENT_SUCCESS  → dap_pre_approved
+      - DAP_INVESTMENT_REJECTED → dap_rejected_policy
+
+    NOTA: Este edge NO tiene rama END porque dap_investment_engine nunca
+    espera input del usuario. Si just_completed_step es None o inesperado,
+    se redirige a dap_rejected_policy como fallback seguro (evita loop).
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.DAP_INVESTMENT_SUCCESS:
+        return "dap_pre_approved"
+    if just_completed == CompletedStep.DAP_INVESTMENT_REJECTED:
+        return "dap_rejected_policy"
+
+    # Fallback defensivo: si el motor no emitió señal, redirigir a rechazo
+    _routing_logger.warning(
+        f"route_after_dap_investment_engine: just_completed_step='{just_completed}' "
+        "inesperado. Redirigiendo a 'dap_rejected_policy' como fallback."
+    )
+    return "dap_rejected_policy"
+
+
+def route_after_dap_pre_approved(state: FluxState) -> str:
+    """
+    Decisión de arista post-dap_pre_approved.
+
+    Este nodo espera la decisión del usuario (ACCEPTED / REJECTED).
+    La señal viaja en just_completed_step:
+      - DAP_PRE_APPROVED    → dap_otp_validation   (usuario aceptó)
+      - DAP_CLOSED_BY_USER  → dap_closed_by_user   (usuario rechazó)
+      - None                → END                   (primer turno: espera respuesta)
+
+    REGLA: Si el nodo acaba de generar la tarjeta de transparencia y aún
+    no hay respuesta del usuario, just_completed_step será None → END.
+    En el siguiente turno, el nodo vuelve a ejecutarse, lee la respuesta
+    y emite el CompletedStep correspondiente.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.DAP_PRE_APPROVED:
+        return "dap_otp_validation"
+    if just_completed == CompletedStep.DAP_CLOSED_BY_USER:
+        return "dap_closed_by_user"
+
+    return END  # Esperar respuesta del usuario
+
+
+def route_after_dap_otp_validation(state: FluxState) -> str:
+    """
+    Decisión de arista post-dap_otp_validation.
+
+    El nodo OTP espera que el usuario ingrese el código.
+    La señal viaja en just_completed_step:
+      - DAP_OTP_SUCCESS    → dap_formalization    (código correcto)
+      - DAP_SECURITY_BLOCK → dap_security_block   (3 intentos fallidos)
+      - None               → END                  (código incorrecto, reintento)
+
+    DISEÑO DE RETENCIÓN: Cuando el código es incorrecto pero hay intentos
+    disponibles, el nodo actualiza el contador en auth_control y retorna
+    sin setear just_completed_step → este edge retorna END → el grafo espera
+    otro turno → el nodo OTP vuelve a ejecutarse en el siguiente mensaje.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.DAP_OTP_SUCCESS:
+        return "dap_formalization"
+    if just_completed == CompletedStep.DAP_SECURITY_BLOCK:
+        return "dap_security_block"
+
+    return END  # Código incorrecto: esperar reintento del usuario
+
+
+def route_after_dap_formalization(state: FluxState) -> str:
+    """
+    Decisión de arista post-dap_formalization.
+    Solo permite el avance al éxito si el contrato se selló y subió correctamente.
+    """
+    session        = state.get("session", {})
+    just_completed = session.get("just_completed_step")
+
+    if just_completed == CompletedStep.DAP_FORMALIZATION_SUCCESS:
+        return "dap_completed"
 
     return END  # Si falló (None), el flujo se detiene por seguridad.

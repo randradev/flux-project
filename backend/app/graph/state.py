@@ -70,7 +70,12 @@ class AccountProgress(TypedDict, total=False):
 
 class DapProgress(TypedDict, total=False):
     """Registro histórico de completitud del flujo de depósito a plazo."""
-    data_completed: bool
+    data_completed:              bool   # True cuando dap_params tiene todos los campos
+    investment_engine_completed: bool   # True cuando el motor de inversión ya se ejecutó
+    pre_approval_accepted:       bool   # True cuando el usuario acepta la tarjeta de transparencia
+    closed_by_user:              bool   # True cuando el usuario rechaza la oferta
+    otp_validated:               bool   # True cuando el OTP es verificado exitosamente
+    contract_signed:             bool   # True cuando el contrato fue firmado digitalmente
 
 class ProgressData(TypedDict, total=False):
     """
