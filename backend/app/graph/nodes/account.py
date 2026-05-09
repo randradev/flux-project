@@ -784,6 +784,7 @@ def account_pre_approved_node(state: FluxState) -> dict:
         
         # Guardamos la data exacta que el usuario aceptó
         output["offer_data"] = {
+            **state.get("offer_data", {}),
             "account": {
                 "pre_approval_status": "ACCEPTED",
                 "timestamp_acceptance": _dt.datetime.utcnow().isoformat(),
