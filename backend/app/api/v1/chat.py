@@ -31,9 +31,11 @@ router = APIRouter()
 
 # Espejo del NODE_DETAILS de flux.js. Fuente de verdad para etiquetas en el stream.
 _NODE_LABELS: dict[str, dict] = {
+    # General
     "WELCOME_NODE":               {"label": "Recepcion",          "progress": 0},
     "INTENT_ROUTER":              {"label": "Clasificacion",       "progress": 5},
     "GENERAL_RESPONSE":           {"label": "Respuesta general",   "progress": 100},
+    # Crédito de Consumo
     "LOAN_INIT":                  {"label": "Inicio credito",      "progress": 10},
     "LOAN_COLLECTING_PROFILE":    {"label": "Perfil financiero",   "progress": 20},
     "LOAN_COLLECTING_SIMULATION": {"label": "Simulacion",          "progress": 35},
@@ -45,7 +47,17 @@ _NODE_LABELS: dict[str, dict] = {
     "LOAN_REJECTED_POLICY":       {"label": "Solicitud rechazada", "progress": 100},
     "LOAN_SECURITY_BLOCK":        {"label": "Bloqueo seguridad",   "progress": 100},
     "LOAN_CLOSED_BY_USER":        {"label": "Cierre voluntario",   "progress": 100},
-    # Agregar ACCOUNT_* y DAP_* cuando sus flujos estén listos
+    # Cuenta Corriente
+    "ACCOUNT_INIT":               {"label": "Inicio cuenta",       "progress": 10},
+    "ACCOUNT_COLLECTING_PROFILE": {"label": "Perfil financiero",   "progress": 30},
+    "ACCOUNT_EVALUATION_ENGINE":  {"label": "Evaluación cuenta",   "progress": 55},
+    "ACCOUNT_PRE_APPROVED":       {"label": "Oferta de cuenta",    "progress": 70},
+    "ACCOUNT_OTP_VALIDATION":     {"label": "Validación identidad", "progress": 85},
+    "ACCOUNT_FORMALIZATION":      {"label": "Generando contrato",  "progress": 95},
+    "ACCOUNT_COMPLETED":          {"label": "Cuenta activada",     "progress": 100},
+    "ACCOUNT_REJECTED_POLICY":    {"label": "No elegible",         "progress": 100},
+    "ACCOUNT_SECURITY_BLOCK":     {"label": "Bloqueo seguridad",   "progress": 100},
+    "ACCOUNT_CLOSED_BY_USER":     {"label": "Solicitud cerrada",   "progress": 100},
 }
 
 def enrich_payload_with_labels(payload: dict) -> dict:
@@ -62,6 +74,7 @@ _ENGINE_NODES = {
     "ACCOUNT_EVALUATION_ENGINE",
     "DAP_INVESTMENT_ENGINE",
     "LOAN_FORMALIZATION",
+    "ACCOUNT_FORMALIZATION",
 }
 
 # ── Extractor dinámico de namespaces ───────────────────────────────
@@ -83,11 +96,25 @@ DIRECT_ACTION_RULES = {
     "LOAN": {
         "ACCEPT_OFFER": {
             "node": "LOAN_OTP_VALIDATION",
-            "progress_flag": "pre_approval_accepted"
+            "progress_flag": "pre_approval_accepted",
+            "completion_step": "LOAN_PRE_APPROVED"
         },
         "REJECT_OFFER": {
             "node": "LOAN_CLOSED_BY_USER",
-            "progress_flag": "closed_by_user"
+            "progress_flag": "closed_by_user",
+            "completion_step": "LOAN_CLOSED_BY_USER"
+        }
+    },
+    "ACCOUNT": {
+        "ACCEPT_OFFER": {
+            "node": "ACCOUNT_OTP_VALIDATION",
+            "progress_flag": "pre_approval_accepted",
+            "completion_step": "ACCOUNT_PRE_APPROVED"
+        },
+        "REJECT_OFFER": {
+            "node": "ACCOUNT_CLOSED_BY_USER",
+            "progress_flag": "closed_by_user",
+            "completion_step": "ACCOUNT_CLOSED_BY_USER"
         }
     }
 }
@@ -347,7 +374,7 @@ async def action_endpoint(
     # 2. Identificar el Producto y buscar la regla
     session = snapshot.get("session", {})
     product = session.get("product_intent", "GENERAL")
-
+    
     # 3. CIRUGÍA: Actualizar estado manualmente
     if product == "LOAN" and action_key == "ACCEPT_OFFER":
         next_node = "LOAN_OTP"  # El siguiente paso es el OTP
@@ -358,7 +385,7 @@ async def action_endpoint(
         flag = "pre_approval_accepted"
     elif product == "DAP" and action_key == "ACCEPT_OFFER":
         # Por si acaso, para otros productos
-        next_node = "DAPT_OTP" 
+        next_node = "DAP_OTP" 
         flag = "pre_approval_accepted"
     # else:
     #     # Por si acaso...
