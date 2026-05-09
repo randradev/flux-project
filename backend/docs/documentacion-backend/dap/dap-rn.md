@@ -47,6 +47,6 @@ Producto de inversión en el cual el cliente deposita una suma de dinero por un 
     - Tasa del Periodo
     - Ganancia Estimada
     - Indicadores de Referencia (Valor del IPC aplicado y, en caso de UF/USD, el precio de cambio utilizado para la validación de límites).
-- La Tarjeta de Transparencia debe tener un botón "Aceptar", y debe ser la única vía a partir de la cual se puede aceptar un Depósito a Plazo (no sirve decir sí por el chat). También debe tener un botón de "Rechazar", que lleva a un estado de cierre voluntario.
-- Tras la aceptación, se envía un código para autenticación OTP, el chat avisa y muestra en la intefaz un campo para rellenar con el código. Si la autenticación falla, el chat debe avisar que falló y ofrecer una nueva instancia de autenticación. Si falla 3 veces, se rechaza el Depósito a Plazo y se realiza un bloqueo de seguridad.
+- La Tarjeta de Transparencia sirve para que el usuario pueda ver de manera ordenada y clara su propuesta, y así pueda tomar la mejor decisión, que debe ser comunicada directamente al LLM por el chat.
+- Tras la aceptación, se envía un código para autenticación OTP, el chat avisa y espera que el usuario le escriba el código de 6 dígitos por el chat. Si la autenticación falla, el bot debe avisar que falló y ofrecer una nueva instancia de autenticación. Si falla 3 veces, se rechaza el depósito a plazo.
 - Si la autenticación es exitosa, se genera un pdf con un hashing SHA-256 como contrato, y el bot felicita y se despide.
