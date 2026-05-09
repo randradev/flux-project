@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Brand from './Brand';
 import CreditWidgets from './widgets/CreditWidgets';
+import AccountWidgets from './widgets/AccountWidgets';
 import WelcomeMessage from './WelcomeMessage';
 import FluxLoadingFeedback from './FluxLoagingFeedback';
 
@@ -114,6 +115,11 @@ export default function ChatPanel({
           onAcceptOffer={onAcceptLoanOffer}
           onRejectOffer={onRejectLoanOffer}
           // onSubmitOtp={onSubmitOtp}
+        />
+        {/* Nuevo bloque simétrico */}
+        <AccountWidgets
+          conversation={conversation}
+          disabled={sending}
         />
       </div>
 

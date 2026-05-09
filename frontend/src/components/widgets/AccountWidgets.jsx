@@ -27,12 +27,7 @@ export default function AccountWidgets({
     <div className="dynamic-widgets">
       {/* 1. Tarjeta de Oferta Transparente */}
       {currentNode === 'ACCOUNT_PRE_APPROVED' && (
-        <AccountOfferCard
-          conversation={conversation}
-          disabled={disabled}
-          onAccept={onAcceptOffer}
-          onReject={onRejectOffer}
-        />
+        <AccountOfferCard conversation={conversation} disabled={disabled} />
       )}
 
       {/* 2. Pantalla de Cierre (Éxito, Rechazo, Bloqueo) */}
