@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from app.graph.state import FluxState
 from app.infra.gemini_client import get_structured_model, get_generation_model
 from app.graph.nodes.schemas.deposit_schemas import DapDataExtraction, DapDecisionExtraction, DapOTPExtraction
-# from app.modules.dap_eng import DAPEngine, PolicyRejectionError
+from app.modules.dap_eng import DapEngine, PolicyRejectionError
 from app.utils.llm_utils import normalize_llm_response
 from app.graph.constants import CompletedStep
 from langchain_core.outputs import LLMResult
@@ -401,7 +401,7 @@ def dap_collect_data_node(state: FluxState) -> dict:
         output["session"] = {
             **output["session"],
             "progress":           updated_progress,
-            "just_completed_step": CompletedStep.DAP_COLLECTING_DATA,
+            "just_completed_step": CompletedStep.DAP_DATA,
             # current_node ya está en "DAP_COLLECTING_DATA" desde output base
         }
         return output  # Sin mensajes: la arista condicional saltará a dap_investment_engine
@@ -460,51 +460,93 @@ def dap_investment_engine_node(state: FluxState) -> dict:
     y conversión de moneda) está delegada a módulos externos para asegurar 
     testabilidad y desacoplamiento de APIs económicas.
     """
-    session = state.get("session", {})
-    prep = state.get("preparation_data", {})
+    # 1. ------ PREPARACIÓN DE DATOS ------
+    session    = state.get("session", {})
+    prep       = state.get("preparation_data", {})
     collecting = state.get("collecting_data", {})
-
+    evaluation_results = state.get("evaluation_results", {})
     dap_params = collecting.get("dap_params", {})
-    monto = dap_params.get("monto", 0.0)
-    moneda = dap_params.get("moneda", "CLP")
-    plazo = dap_params.get("plazo", 0)
-    edad = prep.get("edad", 0)
 
-    # ── Lógica del motor (Orquestación) ──────────────────────────
-    # TODO: En Fase 3, delegar a:
-    # engine_result = dap_eng.calculate_investment_yield(monto, moneda, plazo, edad)
+    try:
+        # 2. ------ LLAMADA AL MOTOR REAL ------
+        engine = DapEngine(
+            preparation_data=prep,
+            dap_params=dap_params,
+        )
+        engine_result = engine.run()
 
-    # Stub para testing del patrón de escritura.
-    engine_result = {
-        "status_proceso": "PRE_APPROVED",
-        "is_elegible": True,
-        "conversion_rate_used": 1.0,
-        "ipc_applied": 0.0,
-        "term_premium": (plazo // 30) * 0.0005,
-        "monthly_rate_total": 0.0,
-        "period_rate": 0.0,
-        "estimated_gain": 0.0,
-        "total_return": monto,
-        "motivo_rechazo": None,
-    }
+    except PolicyRejectionError as e:
+        # Caso: Rechazo por Edad, Renta o Antigüedad
+        engine_result = {
+            "status_proceso":       "REJECTED",
+            "is_elegible":          False,
+            "conversion_rate_used": engine.conversion_rate_used,
+            "ipc_applied":          engine.ipc_applied,
+            "term_premium":         engine.term_premium,
+            "monthly_rate_total":   0.0,
+            "period_rate":          0.0,
+            "estimated_gain":       0.0,
+            "total_return":         0.0,
+            "motivo_rechazo":       e.motivo
+        }
 
-    # ── Sincronía ──────────────────────────────
-    # Notificamos que el procesamiento del motor ha terminado con éxito
+    except Exception as e:
+        # Error técnico inesperado
+        print(f"[ERROR-ENGINE] Fallo crítico: {str(e)}")
+        engine_result = {
+            "status_proceso": "ERROR",
+            "motivo_rechazo": "ERR_INTERNAL",
+        }
+
+    # 3. ------ PERSISTENCIA Y SEMÁFOROS ------
     application_id = session.get("application_id")
     if application_id:
+        engine_status = "SUCCESS" if engine_result["status_proceso"] != "ERROR" else "FAILED"
         update_application_semaphores(
             application_id=application_id,
             current_node_id="DAP_INVESTMENT_ENGINE",
-            node_status="SUCCESS",     # El nodo finalizó su ejecución
-            engine_status="COMPLETED"  # El motor terminó su proceso
+            node_status="SUCCESS",
+            engine_status=engine_status,
         )
-        
+
+    # 4. ------ SELECCIÓN DE FLAG DE SALIDA ------
+    status = engine_result.get("status_proceso")
+    if status == "PRE_APPROVED":
+        completion_flag = CompletedStep.DAP_INVESTMENT_SUCCESS
+        # Actualizar Progreso Histórico (Persistencia para ruteo P1)
+        current_progress = session.get("progress", {})
+        dap_progress = current_progress.get("dap", {})
+        session["progress"] = {
+            **current_progress,
+            "dap": {**dap_progress, "investment_engine_completed": True}
+        }
+    else:
+        # Cubre REJECTED y ERROR
+        completion_flag = CompletedStep.DAP_INVESTMENT_REJECTED
+
     return {
         "evaluation_results": {
-            "dap_engine": engine_result,
+            **evaluation_results,
+            "dap_engine": engine_result # <-- Namespace DAP
         },
-        "session": {**session, "current_node": "DAP_INVESTMENT_ENGINE"},
+        "session": {
+            **session,
+            "just_completed_step": completion_flag,
+        }
     }
+
+    return {
+        "evaluation_results": {
+            **evaluation_results,
+            "dap_engine": engine_result
+        },
+        "session": {
+            **session,
+            "just_completed_step": CompletedStep.DAP_INVESTMENT_SUCCESS,
+        }
+    }
+
+import datetime as _dt  # Alias para evitar colisión con nombres de variables locales
 
 # ======================================================================================================
 # HELPERS DEL FLUJO DE DAP
