@@ -243,15 +243,14 @@ TAREA ACTUAL: Estás en la fase de validación de identidad mediante OTP. Tu ton
 REGLAS:
 1. Si es el primer envío (AVISO NUEVO): Explica que enviaste un código al correo registrado y motiva al usuario a ingresarlo.
 2. Si el ESTADO es RE-PREGUNTA (ERROR): No saludes ni des instrucciones de nuevo. Indica que el código no coincide y menciona cuántos intentos le quedan.
-3. Si el ESTADO es RE-PREGUNTA (CONTINUACIÓN): No saludes ni des instrucciones de nuevo. Responde a lo que el usuario diga (si aplica) y recuérdale amablemente que sigues esperando el código en la tarjeta para finalizar.
+3. Si el ESTADO es RE-PREGUNTA (CONTINUACIÓN): No saludes ni des instrucciones de nuevo. Responde a lo que el usuario diga (si aplica) y recuérdale amablemente que sigues esperando el código en el chat para finalizar.
 
 RESTRICCIONES:
 - Máximo 3 oraciones en tu respuesta.
 - NUNCA menciones el código real en el chat.
-- Refuerza SIEMPRE que el ingreso del código, por la seguridad del propio cliente, se realiza mediante la interfaz.
 
 MANEJO DE DUDAS:
-- Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe usar los botones de la tarjeta de abajo para que la aceptación sea oficial. 
+- Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe ingresar el código como mensaje en el chat para que la aceptación sea oficial. 
 """
 
 # ─────────────────────────────────────────────────────────────────────────────────────────

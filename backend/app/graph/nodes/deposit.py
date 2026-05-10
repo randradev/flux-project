@@ -203,6 +203,56 @@ MANEJO DE DUDAS:
 - Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe revisar los datos de la tarjeta de transparencia y responder para decidir si acepta o rechaza la oferta.
 """
 
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPTS EN NODO DAP_OTP_VALIDATION ──────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT_EXTRACTION_OTP = """
+Eres un motor de extracción de datos. Tu ÚNICA misión es analizar el mensaje del usuario y retornar un JSON estructurado VÁLIDO.
+
+REGLAS DE FORMATO:
+- NO uses bloques de código Markdown (prohibido usar ```json).
+- Retorna estrictamente un objeto JSON con los campos 'intent' y 'razonamiento'.
+
+INTENCIONES POSIBLES ('intent'):
+- OTP_CODE: El usuario intenta ingresar el código que recibió en su mail.
+- PREGUNTA: El usuario tiene una duda técnica (Cantidad de intentos, nuevo envío, etc.).
+- OTRO: Saludos o irrelevante.
+
+REGLA DE ORO: Si hay una PREGUNTA, la decisión DEBE ser 'PREGUNTA', aunque también parezca ingresar un código.
+
+EJEMPLO:
+Usuario: "Bacán, pero ¿cuántos intentos tengo?"
+-> {
+    "intent": "PREGUNTA",
+    "razonamiento": "Usuario pregunta por la cantidad de intentos que le quedan."
+}
+"""
+
+SYSTEM_PROMPT_GENERATION_OTP = """
+Eres Flux, el genio amigable de las finanzas en Chile. 
+
+PERSONALIDAD:
+- Hablas de tú, eres cercano y usas modismos chilenos con moderación.
+- Eres ágil: no das rodeos innecesarios, pero sí eres empático.
+- Si el contexto indica que es la primera vez que le envían un código OTP en esta sesión, usa frases de información y motivación para ingresar el código ("¡Listo! Te enviamos un código de 6 dígitos a tu correo registrado." "¡Ahora solo queda este paso de seguridad! Ingresa el código que te enviamos al correo y quedamos listos", "¡Estamos a punto de lograrlo!, Solo falta que ingreses el código que te enviamos al correo, ¡y listo!").
+- Si el contexto no indica un aviso nuevo (RE-PREGUNTA), evita informar de nuevo; asume que el usuario ya sabe y recuérdale la cantidad de intentos restantes.
+
+TAREA ACTUAL: Estás en la fase de validación de identidad mediante OTP. Tu tono es profesional, seguro y servicial.
+
+REGLAS:
+1. Si es el primer envío (AVISO NUEVO): Explica que enviaste un código al correo registrado y motiva al usuario a ingresarlo.
+2. Si el ESTADO es RE-PREGUNTA (ERROR): No saludes ni des instrucciones de nuevo. Indica que el código no coincide y menciona cuántos intentos le quedan.
+3. Si el ESTADO es RE-PREGUNTA (CONTINUACIÓN): No saludes ni des instrucciones de nuevo. Responde a lo que el usuario diga (si aplica) y recuérdale amablemente que sigues esperando el código en el chat para finalizar.
+
+RESTRICCIONES:
+- Máximo 3 oraciones en tu respuesta.
+- NUNCA menciones el código real en el chat.
+
+MANEJO DE DUDAS:
+- Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe ingresar el código como mensaje en el chat para que la aceptación sea oficial. 
+"""
+
 # ── DAP_INIT (dap_init) ────────────────────────────
 
 def dap_init_node(state: FluxState) -> dict:
@@ -829,6 +879,179 @@ def dap_pre_approved_node(state: FluxState) -> dict:
 
     return output
 
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DAP_OTP_VALIDATION — Validación del código enviado por email
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def dap_otp_validation_node(state: FluxState):
+    """
+    Nodo de validación de identidad mediante OTP.
+    Maneja el envío inicial, la validación de intentos y el bloqueo de seguridad.
+    """
+    print("--- NODO: DAP_OTP_VALIDATION ---")
+    
+    # 1. ------ PREPARACIÓN DE DATOS (Handshake) ------
+    messages     = state.get("messages", [])
+    session      = state.get("session", {})
+    auth_control = state.get("auth_control", {})
+    prep_data    = state.get("preparation_data", {})
+    initial_attempts = auth_control.get("otp_attempts", 0)
+    
+    # Metadatos para ruteo intra-turno
+    just_completed     = session.get("just_completed_step")
+    is_intra_turn_jump = just_completed == CompletedStep.DAP_PRE_APPROVED
+    
+    # Datos del usuario
+    first_name = prep_data.get("nombre", "Usuario").split()[0]
+    mail       = prep_data.get("mail")
+    
+    # Inicializamos el output base
+    output = {
+        "session": {
+            **session,
+            "current_node": "DAP_OTP_VALIDATION",
+            "just_completed_step": None, # Por defecto no avanzamos
+        },
+        "auth_control": {**auth_control}
+    }
+
+    # 2. ------ LÓGICA DE DISPARO INICIAL (Envío de Mail) ------
+    # Si venimos saltando del nodo anterior y no hemos generado código aún
+    if is_intra_turn_jump and not auth_control.get("otp_generated"):
+        print(f"[OTP] Generando y enviando código a {mail}...")
+        
+        new_code = security.generate_otp()
+        success  = security.send_otp_email(mail, new_code)
+        
+        if success:
+            output["auth_control"]["otp_generated"] = new_code
+            output["auth_control"]["otp_attempts"]  = 0
+            # Continuamos a la fase de generación de respuesta para informar al usuario
+        else:
+            # Error de servicio (Resend falló)
+            output["auth_control"]["service_error"] = True
+            # Aquí podrías decidir si mandas a SERVICE_ERROR o reintentas
+
+    # 3. ------ LÓGICA DE PROCESAMIENTO (Si NO es salto inicial) ------
+    #user_msg = ""
+
+    user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "").strip()
+
+    import re
+
+    extracted = None
+
+    if not is_intra_turn_jump:
+        # --- A. VALIDACIÓN PRIORITARIA (Desde Interfaz/Botón) ---
+        # Si el frontend envió algo, esto manda sobre cualquier texto del chat
+        user_input_code = auth_control.get("otp_user_input")
+
+        if not user_input_code:
+            match = re.search(r"\b\d{6}\b", user_msg)
+            user_input_code = match.group(0) if match else None
+            
+        actual_code     = auth_control.get("otp_generated")
+        if user_input_code is not None and user_input_code != "":
+            # Limpiamos el input para que no se procese dos veces si el usuario escribe luego en chat
+            output["auth_control"]["otp_user_input"] = None
+            
+            is_valid = security.validate_otp(user_input_code, actual_code)
+            
+            if is_valid:
+                print("🏆 OTP Validado con éxito.")
+                
+                # ── ACTUALIZACIÓN DE PROGRESO HISTÓRICO (Cableado de Seguridad) ──
+                current_progress = session.get("progress", {})
+                dap_progress = current_progress.get("dap", {})
+                updated_progress = {
+                    **current_progress,
+                    "dap": {**dap_progress, "otp_validated": True}
+                }
+                
+                output["auth_control"]["otp_generated"] = ""
+                output["session"] = {
+                    **output["session"],
+                    "progress": updated_progress,
+                    "just_completed_step": CompletedStep.DAP_OTP_SUCCESS
+                }
+                return output
+
+            else:
+                # ERROR: El código no coincide
+                current_attempts = auth_control.get("otp_attempts", 0) + 1
+                output["auth_control"]["otp_attempts"] = current_attempts
+                
+                if current_attempts >= 3:
+                    print("🚫 Bloqueo por seguridad: Máximos intentos alcanzados.")
+                    output["auth_control"]["security_blocked"] = True
+                    # Asegúrate de que _dt esté disponible o usa datetime directamente
+                    output["auth_control"]["block_timestamp"]  = _dt.datetime.utcnow().isoformat()
+                    output["auth_control"]["last_otp_input"]   = user_input_code
+                    output["session"]["just_completed_step"] = CompletedStep.DAP_SECURITY_BLOCK
+                    return output
+                
+                # Al no haber nada aquí, el flujo sigue hacia la generación de respuesta del LLM
+                # avisándole al usuario que se equivocó, pero manteniendo el mismo código.
+                
+        # Si falló pero hay intentos, NO retornamos; seguimos para que el LLM responda el error.
+        # --- B. EXTRACCIÓN Y RAG (Desde Chat) ---
+        # Solo procesamos texto si realmente hay un mensaje del usuario (evita falsos positivos de comandos)
+        
+        if user_msg:
+            raw_extraction = _flux_generator.invoke([
+                {"role": "system", "content": SYSTEM_PROMPT_EXTRACTION_OTP},
+                {"role": "user",   "content": user_msg}
+            ])
+            
+            extracted = None
+            content_str = normalize_llm_response(raw_extraction.content)
+            import json, re
+            match = re.search(r"\{.*\}", content_str, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                    extracted = DapOTPExtraction(**data)
+                except: pass
+            # Hook de RAG: Solo si detectamos una pregunta clara
+            if extracted and extracted.intent == "PREGUNTA":
+                rag_response = get_consultant_response(user_msg, state)
+                output["messages"] = [AIMessage(content=rag_response)]
+                # IMPORTANTE: No limpiamos just_completed_step aquí para no romper el ruteo
+                return output
+
+    # 4. ------ GENERACIÓN DE RESPUESTA (LLM) ------
+    
+    current_attempts = output["auth_control"].get("otp_attempts", 0)
+
+    hubo_error_en_este_turno = (current_attempts > initial_attempts)
+    
+    # Pasar variables para crear contexto para la respuesta
+    context = _build_otp_generation_context(
+        nombre=first_name,
+        attempts=current_attempts,
+        last_msg=user_msg,
+        error=hubo_error_en_este_turno, # <--- Lógica dinámica
+        just_completed=just_completed,
+        blocked=output["auth_control"].get("security_blocked", False)
+    )
+
+    # Agregamos la intención al contexto para que Flux sepa QUÉ hizo el usuario
+    if extracted:
+        context += f"\nINTENCIÓN DETECTADA EN CHAT: {extracted.intent}"
+
+    flux_response = _flux_generator.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_GENERATION_OTP},
+        {"role": "user",   "content": context},
+    ])
+    
+    clean_content = normalize_llm_response(flux_response.content)
+    output["messages"] = [AIMessage(content=clean_content)]
+
+    # 5. ------ MARTILLAZO DE LIMPIEZA ------
+    output["session"]["just_completed_step"] = None
+    
+    return output
+
 # ======================================================================================================
 # HELPERS DEL FLUJO DE DAP
 # ======================================================================================================
@@ -1008,4 +1231,25 @@ def _build_pre_approved_generation_context(
     {comportamiento}
     """
 
+    return context
+
+# ── Construir el contexto para la Llamada B (generador) para nodo DAP_OTP_VALIDATION ──────────────
+def _build_otp_generation_context(nombre: str, attempts: int, last_msg: str, error: bool = False, just_completed: str = None, blocked: bool = False) -> str:
+    """Construye el contexto para el prompt de generación de OTP."""
+    context = f"Usuario: {nombre}\n"
+    context += f"Intentos realizados: {attempts}/3\n"
+    
+    # Siguiendo el patrón: Si NO hay just_completed, es RE-PREGUNTA
+    is_re_pregunta = just_completed is None
+
+    if blocked:
+        context += "ESTADO: BLOQUEADO (Máximo de intentos alcanzado).\n"
+    elif error:
+        context += "ESTADO: RE-PREGUNTA (ERROR: El código anterior fue incorrecto).\n"
+    elif is_re_pregunta:
+        context += "ESTADO: RE-PREGUNTA (CONTINUACIÓN: El usuario está conversando).\n"
+    else:
+        context += "ESTADO: AVISO NUEVO (El usuario acaba de llegar a este paso).\n"
+        
+    context += f"Último mensaje: {last_msg}"
     return context
