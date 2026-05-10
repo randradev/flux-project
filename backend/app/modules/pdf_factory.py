@@ -36,9 +36,9 @@ class PDFFactory:
             
             self.font_reg = "SpaceGrotesk"
             self.font_bold = "SpaceGrotesk-Bold"
-            print("✅ Fuentes cargadas correctamente.")
+            print(" Fuentes cargadas correctamente.")
         except Exception as e:
-            print(f"❌ Error cargando fuentes: {e}")
+            print(f" Error cargando fuentes: {e}")
             self.font_reg = "Helvetica"
             self.font_bold = "Helvetica-Bold"
 
@@ -91,6 +91,33 @@ class PDFFactory:
                     "Incluye tarjeta de débito digital activa de forma inmediata."
                 ]
             }
+
+        elif product_type == "DEPOSITO_A_PLAZO":
+            # Extraemos los datos con los nombres exactos definidos en el payload del nodo
+            monto    = data.get("monto_invertido", 0)
+            moneda   = data.get("moneda", "CLP")
+            plazo    = data.get("plazo_dias", 0)
+            tasa     = data.get("tasa_mensual", 0)
+            ganancia = data.get("ganancia_estimada", 0)
+            total    = data.get("total_a_recibir", 0)
+
+            return {
+                "titulo": "Contrato de Depósito a Plazo",
+                "resumen": [
+                    ("Monto Invertido",   f"${monto:,.0f} {moneda}"),
+                    ("Plazo de Inversión", f"{plazo} días"),
+                    ("Tasa Mensual",      f"{tasa * 100:.3f}%"),
+                    ("Ganancia Estimada", f"${ganancia:,.2f} {moneda}"),
+                    ("Total Final",       f"${total:,.2f} {moneda}")
+                ],
+                "legal": [
+                    "Este documento certifica la constitución de un Depósito a Plazo Flux.",
+                    "La rentabilidad proyectada considera la tasa fija y el ajuste por IPC si corresponde.",
+                    "El retiro anticipado está sujeto a las condiciones de liquidez vigentes.",
+                    "Al finalizar el plazo, el capital y los intereses se abonarán en la cuenta del titular."
+                ]
+            }
+
 
 
         # Fallback genérico

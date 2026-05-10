@@ -1052,6 +1052,114 @@ def dap_otp_validation_node(state: FluxState):
     
     return output
 
+def dap_formalization_node(state: FluxState) -> dict:
+    """
+    Stub: DAP_FORMALIZATION.
+
+    Responsabilidades finales:
+      - Recopilar datos del motor y del usuario (nombre, rut).
+      - Generar el PDF del contrato con ReportLab.
+      - Calcular hash SHA-256 del PDF generado.
+      - Escribir en offer_data["dap"]: file_contrato_path, hash_sha256, contract_status.
+      - Si SIGNED_AND_STAMPED: continuar a dap_completed (via edge fijo).
+      - Si GENERATION_FAILED: redirigir a SERVICE_ERROR (futuro).
+    """
+    print("--- NODO: DAP_FORMALIZATION ---")
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    prep_data    = state.get("preparation_data", {})
+    dap_engine  = state.get("evaluation_results", {}).get("dap_engine", {})
+    session      = state.get("session", {})
+    offer_dap  = state.get("offer_data", {}).get("dap", {})
+    dap_params = state.get("collecting_data", {}).get("dap_params", {})
+    
+    # 2. ------ EJECUCIÓN (The Worker) ------
+    try:
+        factory = PDFFactory()
+        
+        # Construimos el payload alineado con los requerimientos de branding
+        payload = {
+            "nombre":            prep_data.get("nombre"),
+            "rut":               prep_data.get("rut"),
+            # El monto inicial es el total menos la ganancia
+            "monto_invertido":   dap_engine.get("total_return", 0) - dap_engine.get("estimated_gain", 0),
+            "moneda":            dap_engine.get("moneda"),
+            "plazo_dias":        dap_params.get("plazo"), # Extraído de los parámetros de entrada
+            "tasa_mensual":      dap_engine.get("monthly_rate_total"),
+            "ganancia_estimada": dap_engine.get("estimated_gain"),
+            "total_a_recibir":   dap_engine.get("total_return"),
+            "fecha_emision":     _dt.datetime.now().strftime("%d/%m/%Y")
+        }
+        
+        # A. Generación Local
+        local_path, security_hash = _pdf_factory.create_pdf("DEPOSITO_A_PLAZO", payload)
+        
+        # B. Subida a la Nube (Supabase Storage)
+        cloud_url = upload_contract_to_storage(local_path)
+        
+        if cloud_url:
+            final_path = cloud_url
+            contract_status = "SIGNED_AND_STAMPED"
+            completion_flag = CompletedStep.DAP_FORMALIZATION_SUCCESS
+        else:
+            raise Exception("No se pudo obtener la URL del storage")
+        
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO EN FORMALIZACIÓN: {e}")
+        final_path = None
+        security_hash = None
+        contract_status = "GENERATION_FAILED"
+        completion_flag = None # El ruteador se detendrá para intervención
+        
+    # 3. ------ PERSISTENCIA Y SEMÁFOROS (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="DAP_FORMALIZATION",
+            node_status="SUCCESS" if contract_status == "SIGNED_AND_STAMPED" else "FAILED",
+            engine_status="SUCCESS",
+            document_status="GENERATED" if cloud_url else "PENDING"
+        )
+        
+    # 4. ------ ACTUALIZACIÓN DE ESTADO (The State Manager) ------
+    # A. Progreso Histórico (Consistencia inter-turno)
+    current_progress = session.get("progress", {})
+    dap_progress = current_progress.get("dap", {})
+    updated_progress = {
+        **current_progress,
+        "dap": {**dap_progress, "contract_signed": True}
+    }
+    
+    # B. Consolidación de Oferta y Display para el Usuario
+    updated_offer_dap = {
+        **offer_dap,
+        "file_contrato_path": final_path,
+        "hash_sha256":        security_hash,
+        "contract_status":    contract_status,
+        "display_data": {
+            **offer_dap.get("display_data", {}),
+            "download_url":  final_path,
+            "security_hash": security_hash,
+            "main_detail": f"Inversión total a recibir: ${payload['total_a_recibir']:,.0f} {payload['moneda']}"
+        }
+    }
+    
+    # 5. ------ SALIDA SILENCIOSA (The Jump) ------
+    return {
+        "session": {
+            **session,
+            "current_node":        "DAP_FORMALIZATION",
+            "progress":           updated_progress,
+            "just_completed_step": completion_flag
+        },
+        "offer_data": {
+            **state.get("offer_data", {}),
+            "dap": updated_offer_dap
+        }
+        # Sin "messages": El nodo es invisible para el usuario
+    }
+
 # ======================================================================================================
 # HELPERS DEL FLUJO DE DAP
 # ======================================================================================================
