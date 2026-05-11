@@ -253,6 +253,17 @@ MANEJO DE DUDAS:
 - Si el usuario pregunta cómo proceder o qué hacer, indícale con mucha gracia que debe ingresar el código como mensaje en el chat para que la aceptación sea oficial. 
 """
 
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# ── PROMPTS EN NODO DAP_COMPLETED_NODE ──────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT_GENERATION_COMPLETED = """
+Eres Flux, el genio de las finanzas. El usuario acaba de completar exitosamente la contratación de su Depósito a Plazo en Flux.
+Tu tarea es felicitarlo con mucha energía y calidez chilena. 
+Dile que su contrato ya está listo para descarga (el link aparecerá abajo).
+Sé breve (máximo 2-3 oraciones).
+"""
+
 # ── DAP_INIT (dap_init) ────────────────────────────
 
 def dap_init_node(state: FluxState) -> dict:
@@ -1158,6 +1169,94 @@ def dap_formalization_node(state: FluxState) -> dict:
             "dap": updated_offer_dap
         }
         # Sin "messages": El nodo es invisible para el usuario
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DAP_COMPLETED — Estado Final Exitoso
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def dap_completed_node(state: FluxState) -> dict:
+    """
+    Nodo de Cierre Exitoso: El final del camino para el Depósito a Plazo.
+    
+    Responsabilidades:
+      - Consolidar la vista final para el usuario.
+      - Notificar éxito total en los semáforos de la DB.
+      - Registrar el resultado del flujo para analítica.
+    """
+    print("--- NODO: DAP_COMPLETED ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    session    = state.get("session", {})
+    prep_data  = state.get("preparation_data", {})
+    offer_dap = state.get("offer_data", {}).get("dap", {})
+    engine     = state.get("evaluation_results", {}).get("dap_engine", {})
+    
+    nombre   = prep_data.get("nombre", "Cliente").split()[0]
+    monto_final = engine.get("total_return", 0.0)
+    moneda      = engine.get("moneda", "CLP")
+    file_url = offer_dap.get("file_contrato_path", "")
+    sha256   = offer_dap.get("hash_sha256")
+    
+    # --- LLAMADA B: GENERACIÓN DINÁMICA ---
+    context = f"Usuario: {nombre}. Monto final: {monto_final} {moneda}. El contrato del Depósito a Plazo fue generado exitosamente."
+    
+    flux_response = _flux_generator.invoke([
+        {"role": "system", "content": SYSTEM_PROMPT_GENERATION_COMPLETED},
+        {"role": "user",   "content": context},
+    ])
+    
+    mensaje = normalize_llm_response(flux_response.content)
+
+    # 3. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="DAP_COMPLETED",
+            node_status="SUCCESS",
+            engine_status="SUCCESS",
+            document_status="GENERATED"
+        )
+
+    # 4. ------ ACTUALIZACIÓN DE ESTADO (The State Manager) ------
+    # A. Resultado del Flujo (Analítica)
+    flow_result = {
+        "status_code":  "SUCCESS",
+        "close_reason": None,
+        "product_name": "Depósito a Plazo",
+        "closed_at":    _dt.datetime.utcnow().isoformat(),
+    }
+    
+    # B. Datos de Visualización Final (Frontend)
+    updated_display = {
+        "download_url":  file_url,
+        "main_detail":   f"Monto final: {monto_final} {moneda}",
+        "security_hash": sha256,
+        "reason":        None
+    }
+    
+    # C. Consolidación de la Oferta
+    updated_offer_dap = {
+        **offer_dap,
+        "display_data": updated_display
+    }
+
+    # 5. ------ SALIDA (The Final Jump) ------
+    return {
+        "session": {
+            **session,
+            "current_node":      "DAP_COMPLETED",
+            "previous_node":     session.get("current_node"),
+            "just_completed_step": None, # Nodo terminal
+        },
+        "flow_result": flow_result,
+        "offer_data": {
+            **state.get("offer_data", {}),
+            "dap": updated_offer_dap
+        },
+        "messages": [AIMessage(content=mensaje)]
     }
 
 # ======================================================================================================

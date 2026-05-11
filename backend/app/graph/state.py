@@ -394,7 +394,7 @@ class FluxState(TypedDict):
     │ messages          │ Historial de mensajes (reducer acum.)│
     │ user_data         │ Perfil RAW de la DB (inmutable)      │
     │ session           │ GPS del grafo + metadatos de sesión  │
-    │ preparation_data  │ Datos "cocinados" para nodos          │
+    │ preparation_data  │ Datos "cocinados" para nodos         │
     │ collecting_data   │ Extracción del chat (por producto)   │
     │ evaluation_results│ Outputs de motores financieros       │
     │ offer_data        │ Oferta aceptada + contrato           │
