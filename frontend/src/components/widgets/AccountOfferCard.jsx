@@ -29,7 +29,7 @@ export default function AccountOfferCard({ conversation, disabled, onAccept, onR
     ['Plan sugerido', result.plan_nombre ?? result.final_category ?? 'Pendiente'],
     ['Línea de crédito', formatClp(result.cupo_linea ?? result.credit_line_amount)],
     ['Costo mensual', formatClp(result.costo_mensual ?? result.monthly_cost)],
-    ['Beneficio Upgrade', result.beneficio_upgrade ?? (result.has_upgrade ? 'Sí' : 'No') ?? 'No']
+    ['Beneficio Upgrade', result.has_upgrade || 'No']
   ];
 
   return (

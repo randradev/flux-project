@@ -33,6 +33,13 @@ export default function ChatPanel({
   const [message, setMessage] = useState('');
   const windowRef = useRef(null);
 
+  const lastAssistantIndex = [...(conversation?.messages || [])]
+    .reverse()
+    .findIndex(m => m.role === 'assistant');
+  const actualLastAssistantIndex = lastAssistantIndex !== -1
+    ? (conversation.messages.length - 1 - lastAssistantIndex)
+    : -1;
+
   useEffect(() => {
     if (!windowRef.current) {
       return;
@@ -84,45 +91,48 @@ export default function ChatPanel({
           <WelcomeMessage onSelect={handleProductSelect} />
         )}
 
-
         {loadingMessages && (
           <section className="loading-inline">
             <p>Cargando mensajes persistidos...</p>
           </section>
         )}
 
-        {conversation?.messages?.map((item) => (
-          <article key={item.id} className={`message ${item.role}`}>
-            <div className="message-bubble">
-              <p>{item.content}</p>
-              <small>
-                {item.role === 'user' ? 'Tú' : 'Asistente Flux'} {' | '} {formatMessageTime(item.createdAt)}
-              </small>
-            </div>
-          </article>
+        
+        {conversation?.messages?.map((item, index) => (
+          <React.Fragment key={item.id}>
+            <article className={`message ${item.role}`}>
+              <div className="message-bubble">
+                <p>{item.content}</p>
+                <small>
+                  {item.role === 'user' ? 'Tú' : 'Asistente Flux'} {' | '} {formatMessageTime(item.createdAt)}
+                </small>
+              </div>
+            </article>
+            {/* INSERTAMOS LOS WIDGETS AQUÍ: Justo después del último mensaje del asistente */}
+            {index === actualLastAssistantIndex && (
+              <div className="widgets-flow-container flux-widget-entry" style={{ margin: '1.5rem 0' }}>
+                <CreditWidgets
+                  conversation={conversation}
+                  disabled={sending}
+                  onAcceptOffer={onAcceptLoanOffer}
+                  onRejectOffer={onRejectLoanOffer}
+                />
+                <AccountWidgets
+                  conversation={conversation}
+                  disabled={sending}
+                />
+                <DapWidgets
+                  conversation={conversation}
+                  disabled={sending}
+                />
+              </div>
+            )}
+          </React.Fragment>
         ))}
 
         {sending && conversation?.messages?.at(-1)?.role === 'user' && (
           <FluxLoadingFeedback />
         )}
-
-        <CreditWidgets
-          conversation={conversation}
-          disabled={sending}
-          onAcceptOffer={onAcceptLoanOffer}
-          onRejectOffer={onRejectLoanOffer}
-          // onSubmitOtp={onSubmitOtp}
-        />
-        {/* Nuevo bloque simétrico */}
-        <AccountWidgets
-          conversation={conversation}
-          disabled={sending}
-        />
-        {/* Nuevo bloque simétrico */}
-        <DapWidgets
-          conversation={conversation}
-          disabled={sending}
-        />
       </div>
 
       <form className="composer" onSubmit={handleSubmit}>

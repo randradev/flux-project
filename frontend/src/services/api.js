@@ -1,4 +1,4 @@
-﻿const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 export const apiBaseUrl = rawApiBaseUrl.replace(/\/$/, '');
 export const hasApiConfig = Boolean(apiBaseUrl);
@@ -53,8 +53,7 @@ export async function fetchConversationHistory(accessToken) {
 
 export async function fetchConversationMessages(accessToken, conversationId) {
   const response = await authorizedFetch(`/api/v1/history/${conversationId}`, accessToken);
-  const payload = await response.json();
-  return payload.messages ?? [];
+  return await response.json();
 }
 
 function parseSseChunk(chunk) {

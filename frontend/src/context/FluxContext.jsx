@@ -74,25 +74,34 @@ function formatConversationTitle(item) {
   return stage ? `${productLabel} · ${stage}` : productLabel;
 }
 
-
 function mapHistoryItem(item) {
-  // 1. Normalizamos los datos primero
+  // 1. Normalizamos los datos de navegación
   const currentNode = normalizeNodeId(item.current_node_id ?? item.current_node ?? item.currentStep ?? null);
   const productIntent = getProductFromNode(currentNode, item.product_types?.code ?? null);
-  // 2. Creamos el objeto mapeado
+  
+  // 2. Extraemos el Snapshot (la "foto" de la sesión que manda el backend)
+  const snapshot = item.state_snapshot || {};
+  // 3. Creamos el objeto con los datos ya hidratados
   const mapped = {
     id: item.id,
     isDraft: false,
-    productIntent, // Ya normalizado
-    currentNode,    // Ya normalizado
+    productIntent,
+    currentNode,
     productName: item.product_types?.name || '',
     messages: [],
     detailLoaded: false,
     createdAt: item.created_at,
     updatedAt: item.updated_at || item.created_at,
-    ...createRuntimeState()
+    
+    // --- AQUÍ ESTÁ EL TRUCO: Hidratamos los datos desde el snapshot ---
+    transparencyData: snapshot.transparency_data || {},
+    collectingData: snapshot.collecting_data || {},
+    evaluationResults: snapshot.evaluation_results || {},
+    offerData: snapshot.offer_data || {},
+    authControl: snapshot.auth_control || {},
+    flowResult: snapshot.flow_result || null
   };
-  // 3. Generamos el título usando el objeto que acabamos de normalizar
+  // 4. Generamos el título con los datos ya puestos
   mapped.title = formatConversationTitle(mapped);
   return mapped;
 }
@@ -366,7 +375,9 @@ export function FluxProvider({ accessToken, children }) {
     setAppError('');
 
     try {
-      const messageItems = await fetchConversationMessages(accessToken, conversationId);
+      const payload = await fetchConversationMessages(accessToken, conversationId);
+      const snapshot = payload.state_snapshot || {};
+
       setConversations((current) =>
         current.map((item) => {
           if (item.id !== conversationId) {
@@ -375,8 +386,15 @@ export function FluxProvider({ accessToken, children }) {
 
           return {
             ...item,
-            messages: messageItems.map(mapMessage),
-            detailLoaded: true
+            messages: (payload.messages || []).map(mapMessage),
+            detailLoaded: true,
+            // Hidratación desde el snapshot del servidor
+            transparencyData: snapshot.transparency_data || snapshot.transparencyData || item.transparencyData,
+            collectingData: snapshot.collecting_data || snapshot.collectingData || item.collectingData,
+            evaluationResults: snapshot.evaluation_results || snapshot.evaluationResults || item.evaluationResults,
+            offerData: snapshot.offer_data || snapshot.offerData || item.offerData,
+            authControl: snapshot.auth_control || snapshot.authControl || item.authControl,
+            flowResult: snapshot.flow_result || snapshot.flowResult || item.flowResult
           };
         })
       );

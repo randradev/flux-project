@@ -59,11 +59,11 @@ async def get_messages_by_conversation(
     """
     user_id = str(user_profile.get("id"))
 
-    # Verificar propiedad
+    # 1. Verificar propiedad y obtener snapshot
     conv = (
         supabase_client
         .table("conversations")
-        .select("id")
+        .select("id, state_snapshot")
         .eq("id", conversation_id)
         .eq("user_id", user_id)
         .maybe_single()
@@ -77,7 +77,11 @@ async def get_messages_by_conversation(
         )
 
     messages = get_conversation_messages(conversation_id)
-    return {"conversation_id": conversation_id, "messages": messages}
+    return {
+        "conversation_id": conversation_id, 
+        "messages": messages,
+        "state_snapshot": conv.data.get("state_snapshot")
+    }
 
 # ── Pendiente ────────────────────────────────────────
 # =========================== BORRAR CONVERSACIÓN =====
