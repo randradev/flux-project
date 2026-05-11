@@ -1,15 +1,15 @@
-﻿export const PRODUCT_INTENT_LABELS = {
-  LOAN: 'Credito de Consumo',
+export const PRODUCT_INTENT_LABELS = {
+  LOAN: 'Crédito de Consumo',
   ACCOUNT: 'Cuenta Corriente',
-  DAP: 'Deposito a Plazo',
+  DAP: 'Depósito a Plazo',
   GENERAL: 'Consulta General'
 };
 
 export const PRODUCT_ICONS = {
-  LOAN: 'CR',
-  ACCOUNT: 'CC',
-  DAP: 'DP',
-  GENERAL: 'FL'
+  LOAN: '💰',
+  ACCOUNT: '🏦',
+  DAP: '📈',
+  GENERAL: '💬'
 };
 
 export const NODE_ALIASES = {

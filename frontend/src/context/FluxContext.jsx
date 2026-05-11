@@ -7,8 +7,7 @@ import {
   streamChat,
   apiBaseUrl
 } from '../services/api';
-import { getProductFromNode, getProductLabel, normalizeNodeId } from '../constants/flux';
-
+import { getProductFromNode, getProductLabel, normalizeNodeId, getNodeMeta } from '../constants/flux';
 
 export const DRAFT_ID = '__draft__';
 
@@ -50,36 +49,52 @@ function createDraftConversation() {
 }
 
 function formatConversationTitle(item) {
-  const productName = item.product_types?.name ?? '';
+  const productIntent = item.product_types?.code || item.productIntent;
+  const currentNode = item.current_node_id || item.current_node || item.currentNode;
+  
+  // Nombres cortos de batalla para el historial
+  const shortLabels = {
+    LOAN: 'Crédito',
+    ACCOUNT: 'Cuenta',
+    DAP: 'Inversión',
+    GENERAL: 'Flux'
+  };
 
-  if (productName) {
-    return productName;
+  const productLabel = shortLabels[productIntent] || 'Flux';
+  const nodeMeta = getNodeMeta(currentNode);
+  const stage = nodeMeta.label; // Ej: "Simulación"
+
+  // Si es general, algo muy breve
+  if (!productIntent || productIntent === 'GENERAL') {
+    const date = new Date(item.updated_at || item.created_at || Date.now());
+    return `Flux: ${date.toLocaleDateString('es-CL', { day: 'numeric', month: 'short' })}`;
   }
 
-  const date = new Date(item.updated_at || item.created_at || Date.now());
-
-  return `Conversacion ${date.toLocaleDateString('es-CL')}`;
+  // Formato ultra-corto: "Crédito · Simulación"
+  return stage ? `${productLabel} · ${stage}` : productLabel;
 }
 
+
 function mapHistoryItem(item) {
+  // 1. Normalizamos los datos primero
   const currentNode = normalizeNodeId(item.current_node_id ?? item.current_node ?? item.currentStep ?? null);
   const productIntent = getProductFromNode(currentNode, item.product_types?.code ?? null);
-
-  return {
+  // 2. Creamos el objeto mapeado
+  const mapped = {
     id: item.id,
     isDraft: false,
-    title: formatConversationTitle(item),
-    productName: item.product_types?.name ?? '',
-    productIntent,
-    currentNode,
-    nodeSource: 'history',
-    isActive: item.is_active ?? true,
+    productIntent, // Ya normalizado
+    currentNode,    // Ya normalizado
+    productName: item.product_types?.name || '',
     messages: [],
     detailLoaded: false,
-    createdAt: item.created_at ?? null,
-    updatedAt: item.updated_at ?? item.created_at ?? null,
+    createdAt: item.created_at,
+    updatedAt: item.updated_at || item.created_at,
     ...createRuntimeState()
   };
+  // 3. Generamos el título usando el objeto que acabamos de normalizar
+  mapped.title = formatConversationTitle(mapped);
+  return mapped;
 }
 
 function mapMessage(item) {
@@ -248,7 +263,7 @@ export function FluxProvider({ accessToken, children }) {
     refreshHistory();
   }, [accessToken]);
 
-  // ── AUTO-SELECCIÓN INICIAL ──
+/*   // ── AUTO-SELECCIÓN INICIAL ──
   // Solo queremos auto-seleccionar la primera conversación al CARGAR la app, 
   // no cada vez que el usuario elige "Nueva Conversación".
   const hasAutoSelected = React.useRef(false); // Necesitas importar useRef o usar React.useRef
@@ -260,7 +275,7 @@ export function FluxProvider({ accessToken, children }) {
       setSelectedConversationId(conversations[0].id);
       hasAutoSelected.current = true;
     }
-  }, [conversations]);
+  }, [conversations]); */
 
   function mergeHistory(nextItems) {
     setConversations((current) => {
@@ -385,17 +400,22 @@ export function FluxProvider({ accessToken, children }) {
     setAppError('');
   }
 
-  function promoteDraftConversation(conversationId) {
-    setConversations((current) => [
-      {
-        ...draftConversation,
-        id: conversationId,
-        isDraft: false,
-        title: draftConversation.title || 'Conversacion FLUX',
-        nodeSource: 'stream'
-      },
-      ...current
-    ]);
+  function promoteDraftConversation(conversationId, initialMessages = []) {
+    // Marcamos que ya hubo una selección (la nuestra), para que el useEffect no interfiera
+    hasAutoSelected.current = true; 
+    setConversations((current) => {
+      if (current.find(c => c.id === conversationId)) return current;
+      return [
+        {
+          ...draftConversation,
+          id: conversationId,
+          isDraft: false,
+          nodeSource: 'stream',
+          messages: initialMessages
+        },
+        ...current
+      ];
+    });
     setSelectedConversationId(conversationId);
   }
 
@@ -459,7 +479,7 @@ export function FluxProvider({ accessToken, children }) {
         authControl: mergeObjectPayload(conversation.authControl, nextAuthControl),
         flowResult: nextFlowResult ?? conversation.flowResult,
         productIntent: nextProductIntent,
-        title: conversation.productName || productTitle,
+        title: formatConversationTitle({ ...conversation, currentNode: nextNode }),
         nodeSource: 'stream',
         updatedAt: new Date().toISOString(),
         // ── Nuevos campos (Fase 2) ──
@@ -538,13 +558,15 @@ export function FluxProvider({ accessToken, children }) {
   
   let activeConversationId = effectiveId || DRAFT_ID;
 
-  appendLocalMessage(activeConversationId, {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: cleanText,
-      createdAt: new Date().toISOString(),
-      nodeAtTime: null
-    });
+  const userMessage = {
+    id: crypto.randomUUID(),
+    role: 'user',
+    content: cleanText,
+    createdAt: new Date().toISOString(),
+    nodeAtTime: null
+  };
+
+  appendLocalMessage(activeConversationId, userMessage);
 
     try {
       await streamChat({
@@ -577,17 +599,10 @@ export function FluxProvider({ accessToken, children }) {
           }
 
           if (event.type === 'done') {
-
-            console.log("Cambiando DRAFT a ID real:", event.conversation_id);
-            // 1. Actualizamos el ID seleccionado de inmediato
-            setSelectedConversationId(event.conversation_id);
-    
-            // 2. ACTUALIZACIÓN CRÍTICA: Cambiamos el ID del draft en la lista local 
-            setConversations(prev => prev.map(c => 
-              c.id === DRAFT_ID ? { ...c, id: event.conversation_id } : c
-            ));
-            
+            console.log("Finalizando stream para:", event.conversation_id);
             setSending(false);
+            // Opcional: refrescar historial en segundo plano para traer el título final del backend
+            refreshHistory(); 
           }
 
           if (event.type === 'error') {

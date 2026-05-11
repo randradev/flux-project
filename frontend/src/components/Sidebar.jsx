@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import Brand from './Brand';
 import { getProductIcon } from '../constants/flux';
 
@@ -32,8 +32,8 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-actions">
-        <button className="primary-button" type="button" onClick={onNewConversation}>
-          Nueva conversacion
+        <button className="primary-button flux-orange-btn" type="button" onClick={onNewConversation}>
+          <span>Nueva conversación</span>
         </button>
       </div>
 
@@ -43,16 +43,19 @@ export default function Sidebar({
       </div>
 
       <div className="chat-history" aria-label="Historial de conversaciones">
-        {/* <button
-          className={`history-card ${selectedConversationId === '__draft__' ? 'selected' : ''}`}
-          onClick={onNewConversation}
-          type="button"
-        >
-          <span className="history-icon">NW</span>
-          <span>
-            <strong>Nueva conversacion</strong>
-          </span>
-        </button> */}
+        {selectedConversationId === '__draft__' && (
+          <button
+            className="history-card selected draft-card orange-theme"
+            onClick={onNewConversation}
+            type="button"
+          >
+            <span className="history-icon">🚀</span>
+            <div className="history-info">
+              <small>Justo ahora</small>
+              <strong>Tu próximo paso</strong>
+            </div>
+          </button>
+        )}
 
         {conversations.map((conversation) => (
           <button
@@ -64,10 +67,10 @@ export default function Sidebar({
             <span className="history-icon">
               {getProductIcon(conversation.productIntent, conversation.productName)}
             </span>
-            <span>
-              <strong>{conversation.title}</strong>
+            <div className="history-info">
               <small>{formatTimestamp(conversation.updatedAt)}</small>
-            </span>
+              <strong>{conversation.title}</strong>
+            </div>
           </button>
         ))}
       </div>
