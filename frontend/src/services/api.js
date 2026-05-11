@@ -75,6 +75,7 @@ function parseSseChunk(chunk) {
   }
 }
 
+
 export async function streamChat({
   accessToken,
   message,
@@ -140,5 +141,13 @@ export async function streamChat({
     }
   }
 }
+
+export async function deleteConversation(accessToken, conversationId) {
+  // Usamos authorizedFetch para que envíe el Bearer Token automáticamente
+  return await authorizedFetch(`/api/v1/history/${conversationId}`, accessToken, {
+    method: 'DELETE'
+  });
+}
+
 
 export { ApiError };

@@ -270,3 +270,30 @@ def get_conversation_snapshot(conversation_id: str) -> dict | None:
     if response.data and len(response.data) > 0:
         return response.data[0].get("state_snapshot")
     return None
+
+def delete_conversation(conversation_id: str, user_id: str) -> bool:
+    """
+    Elimina una conversación y sus mensajes. 
+    Borramos mensajes primero para evitar errores de clave foránea.
+    """
+    try:
+        # 1. Borrar mensajes manualmente (por si la DB no tiene cascada)
+        supabase_admin.table("messages").delete().eq("conversation_id", conversation_id).execute()
+        
+        # 2. Ahora borrar la conversación verificando que sea del usuario
+        response = (
+            supabase_admin
+            .table("conversations")
+            .delete()
+            .eq("id", conversation_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        
+        # Si borró algo, response.data tendrá el registro eliminado
+        return len(response.data) > 0
+    except Exception as e:
+        # Revisa tu terminal de Uvicorn, aquí verás el error real si falla
+        print(f"ERROR DB eliminando conversación {conversation_id}: {e}")
+        return False
+

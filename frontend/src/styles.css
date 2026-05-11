@@ -2340,4 +2340,99 @@ code {
   to { opacity: 1; transform: translateY(0); filter: blur(0); }
 }
 
+.history-item { position: relative; }
 
+.delete-chat-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0; /* Invisible por defecto */
+  background: none;
+  border: none;
+  color: #94A3B8;
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 5px;
+}
+
+.history-item:hover .delete-chat-btn {
+  opacity: 1; /* Aparece al hacer hover */
+}
+
+.delete-chat-btn:hover {
+  color: #EF4444; /* Rojo al pasar el mouse por el basurero */
+}
+
+/* Modal de Confirmación Estilo Flux */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.7); /* Azul oscuro traslúcido */
+  backdrop-filter: blur(8px); /* Efecto Glassmorphism */
+  display: flex; align-items: center; justify-content: center;
+  z-index: 2000;
+  animation: flux-fade-in 0.3s ease-out;
+}
+
+.modal-card {
+  background: white;
+  padding: 32px;
+  border-radius: 28px;
+  width: 90%;
+  max-width: 380px;
+  text-align: center;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  animation: flux-slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-icon-container {
+  width: 70px; height: 70px;
+  background: #FFF7ED; /* Naranja muy suave */
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px;
+  color: var(--flux-orange);
+}
+
+.modal-title {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #0F172A;
+  margin-bottom: 12px;
+}
+
+.modal-text {
+  color: #64748B;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin-bottom: 28px;
+}
+
+.modal-actions {
+  display: flex; gap: 12px;
+}
+
+.modal-btn {
+  flex: 1; padding: 14px;
+  border-radius: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.modal-btn-cancel { background: #F1F5F9; color: #475569; }
+.modal-btn-cancel:hover { background: #E2E8F0; }
+
+.modal-btn-delete { 
+  background: var(--flux-orange); 
+  color: white;
+  box-shadow: 0 4px 12px rgba(255, 122, 0, 0.2);
+}
+.modal-btn-delete:hover { transform: translateY(-2px); filter: brightness(1.1); }
+
+@keyframes flux-slide-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}

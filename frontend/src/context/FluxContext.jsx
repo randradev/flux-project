@@ -5,7 +5,8 @@ import {
   fetchConversationMessages,
   hasApiConfig,
   streamChat,
-  apiBaseUrl
+  apiBaseUrl,
+  deleteConversation
 } from '../services/api';
 import { getProductFromNode, getProductLabel, normalizeNodeId, getNodeMeta } from '../constants/flux';
 
@@ -707,6 +708,22 @@ export function FluxProvider({ accessToken, children }) {
       : conversations.find((item) => item.id === selectedConversationId) ?? draftConversation;
 
   const isEngineRunning = selectedConversation?.nodeStatus === 'PROCESSING';
+  
+  async function deleteChat(conversationId) {
+    try {
+      // Pasamos el accessToken que ya tenemos en el scope del contexto
+      await deleteConversation(accessToken, conversationId);
+      
+      if (selectedConversationId === conversationId) {
+        startDraftConversation();
+      }
+      
+      setConversations(prev => prev.filter(c => c.id !== conversationId));
+    } catch (error) {
+      console.error("Error borrando chat:", error);
+      setAppError("No se pudo eliminar la conversación");
+    }
+  }
 
   const value = {
     apiBaseUrl,
@@ -729,6 +746,7 @@ export function FluxProvider({ accessToken, children }) {
     sendOtpCode,
     sending,
     startDraftConversation,
+    deleteChat,
     isEngineRunning,  // NUEVO: true cuando un nodo ENGINE está corriendo
   };
 

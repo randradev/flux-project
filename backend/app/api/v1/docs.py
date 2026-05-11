@@ -83,6 +83,25 @@ async def get_messages_by_conversation(
         "state_snapshot": conv.data.get("state_snapshot")
     }
 
-# ── Pendiente ────────────────────────────────────────
-# =========================== BORRAR CONVERSACIÓN =====
-# ── Pendiente ────────────────────────────────────────
+# ─────────────────────────────────────────
+# ========= BORRAR CONVERSACIÓN ===========
+# ─────────────────────────────────────────
+@router.delete("/history/{conversation_id}")
+async def delete_conversation_endpoint(
+    conversation_id: str,
+    user_profile: dict = Depends(get_verified_user),
+):
+    """
+    Elimina permanentemente una conversación del historial.
+    """
+    user_id = str(user_profile.get("id"))
+    from app.infra.supabase import delete_conversation
+    
+    success = delete_conversation(conversation_id, user_id)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="No se pudo eliminar la conversación o no tienes permisos."
+        )
+    
+    return {"status": "success", "message": "Conversación eliminada"}
