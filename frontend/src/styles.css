@@ -2219,3 +2219,33 @@ code {
     transform: translateY(0) scale(1);
   }
 }
+
+/* Pasados: Se mantienen en el Azul FLUX que ya tienes */
+.milestones li.complete .milestone-dot {
+  border-color: var(--flux-blue);
+  background: var(--flux-blue);
+  box-shadow: 0 0 0 4px rgba(48, 79, 254, 0.1);
+}
+
+/* Actual (Active): Naranja y con animación de parpadeo */
+.milestones li.active .milestone-dot {
+  border-color: var(--flux-orange) !important;
+  background: var(--flux-orange) !important;
+  animation: flux-active-step-pulse 2s infinite ease-in-out;
+}
+
+/* Definición de la animación de parpadeo/pulso */
+@keyframes flux-active-step-pulse {
+  0% {
+    box-shadow: 0 0 0 0px rgba(255, 109, 0, 0.5);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 12px rgba(255, 109, 0, 0);
+    transform: scale(1.2);
+  }
+  100% {
+    box-shadow: 0 0 0 0px rgba(255, 109, 0, 0);
+    transform: scale(1);
+  }
+}

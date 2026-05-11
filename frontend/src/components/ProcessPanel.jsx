@@ -27,23 +27,25 @@ export default function ProcessPanel({ conversation }) {
           <small>{phaseLabel}</small> */}
         </div>
 
-        <ol className="milestones">
-          {steps.map((step, index) => {
-            const state = getMilestoneState(step.id, currentNode, index, steps);
-            const description =
-              step.id === 'FLOW_RESULT' && currentNode ? getFlowResultLabel(currentNode) : '';
-
-            return (
-              <li key={step.id} className={state}>
-                <span className="milestone-dot" aria-hidden="true" />
-                <span>
-                  <strong>{step.label}</strong>
-                  <small>{description}</small>
-                </span>
-              </li>
-            );
-          })}
-        </ol>
+        {/* Solo renderizamos la lista de hitos si hay un producto detectado */}
+          {conversation?.productIntent && conversation?.productIntent !== 'GENERAL' && (
+            <ol className="milestones">
+              {steps.map((step, index) => {
+                const state = getMilestoneState(step.id, currentNode, index, steps);
+                const description =
+                  step.id === 'FLOW_RESULT' && currentNode ? getFlowResultLabel(currentNode) : '';
+                return (
+                  <li key={step.id} className={state}>
+                    <span className="milestone-dot" aria-hidden="true" />
+                    <span>
+                      <strong>{step.label}</strong>
+                      <small>{description}</small>
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
       </div>
 
       {/* Herramientas para Desarrollador: No renderizar
