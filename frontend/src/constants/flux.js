@@ -450,6 +450,58 @@ const DAP_TERMINAL_NODES = new Set([
   'DAP_CLOSED_BY_USER'
 ]);
 
+export function getFluxTip(productIntent, nodeId, seed = 0) {
+  const CATEGORIES = {
+    'GENERAL': [
+      '¿Sabías que Flux usa encriptación SHA-256 para proteger todos tus contratos digitales? 🔒',
+      'Puedes preguntarme sobre Créditos, Cuentas o Inversiones en cualquier momento. 🚀',
+      'Flux usa inteligencia artificial para que el banco hable tu mismo idioma. 🗣️',
+      'Recuerda que todos nuestros procesos son 100% digitales y sin papeles. 🍃'
+    ],
+    'LOAN': [
+      'Tu antigüedad laboral mínima para un crédito debe ser de 6 meses. 📅',
+      'Dato: Tener estudios de postgrado te suma 20 puntos extra en tu evaluación de riesgo. 📚',
+      'La cuota de tu crédito no podrá exceder el 30% de tu sueldo líquido. ⚖️',
+      'Un Scoring sobre 80 puntos te da acceso a la tasa más baja: 1.2% mensual. 📉',
+      'Puedes solicitar desde $100.000 hasta $30.000.000 según tu perfil. 🏦',
+      'El plazo para pagar tu crédito va desde 6 hasta 48 meses. 🗓️'
+    ],
+    'ACCOUNT': [
+      'Renta mínima para abrir tu cuenta corriente: $500.000 líquido. 💵',
+      '¡Atención! Si eres profesional, subes de categoría automáticamente (Upgrade). 🎓',
+      'Nuestras cuentas START, MEDIUM y ADVANCE tienen costo mensual $0. 🆕',
+      'La línea de crédito se activa si tienes más de 12 meses de antigüedad laboral. 📅',
+      'Flux analiza tu antigüedad laboral para darte los mejores beneficios. 💼'
+    ],
+    'DAP': [
+      'Puedes invertir en CLP, UF o USD. ¡Tú eliges cómo proteger tus ahorros! 💱',
+      'El monto mínimo para empezar a ganar con DAP es de solo $50.000 CLP. 💰',
+      'Dato: El DAP no permite retiros anticipados, elige bien el plazo. ⏳',
+      'Si inviertes en CLP, sumamos el IPC a tu tasa base de 0.2% mensual. 📈'
+    ]
+  };
+
+  // Construimos el pool: Generales + los del Producto Actual
+  let pool = [...CATEGORIES.GENERAL];
+  if (CATEGORIES[productIntent]) {
+    pool = [...pool, ...CATEGORIES[productIntent]];
+  }
+
+  // Si hay tips específicos para este nodo, los inyectamos dos veces para darles prioridad (peso)
+  const nodeSpecific = {
+    'LOAN_OTP_VALIDATION': 'El código OTP llega a tu correo. Revisa Notificaciones o SPAM. 📧',
+    'ACCOUNT_OTP_VALIDATION': 'La firma digital es legalmente vinculante y protege tu identidad. ✒️'
+  };
+
+  if (nodeSpecific[nodeId]) {
+    pool.push(nodeSpecific[nodeId], nodeSpecific[nodeId]); 
+  }
+
+  const index = Math.abs(seed) % pool.length;
+  return pool[index];
+}
+
+
 export function normalizeNodeId(nodeId) {
   if (!nodeId) {
     return null;

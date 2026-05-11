@@ -1,11 +1,13 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   getFlowResultLabel,
   getMilestoneState,
   getNodeMeta,
   getProductLabel,
-  getStepsForConversation
+  getStepsForConversation,
+  getFluxTip
 } from '../constants/flux';
+
 
 export default function ProcessPanel({ conversation }) {
   const currentNode = conversation?.currentNode ?? null;
@@ -17,6 +19,17 @@ export default function ProcessPanel({ conversation }) {
     conversation?.productIntent === 'LOAN' || currentNode?.startsWith('LOAN_')
       ? 'Fase 2 Dev 2'
       : 'Fase 1 Dev 2'; */
+
+  const [tipIndex, setTipIndex] = useState(0);
+
+  useEffect(() => {
+    // Quitamos [currentNode] de las dependencias para que el timer no se resetee
+    const interval = setInterval(() => {
+      setTipIndex(prev => prev + 1);
+    }, 8000);
+    
+    return () => clearInterval(interval);
+  }, [currentNode]); // Se reinicia el contador si cambiamos de etapa
 
   return (
     <aside className="process-panel">
@@ -46,6 +59,19 @@ export default function ProcessPanel({ conversation }) {
               })}
             </ol>
           )}
+      </div>
+      <div className="flux-tip-card">
+        <div className="tip-header">
+          <span className="tip-icon">💡</span>
+          <strong>Flux Tip</strong>
+        </div>
+        <p className="tip-text" key={tipIndex}>
+          {getFluxTip(conversation?.productIntent, currentNode, (conversation?.id?.length || 0) + tipIndex)}
+        </p>
+        {/* Barra de progreso de tiempo (Timer Bar) */}
+        <div className="tip-timer-bar">
+          <div className="tip-timer-fill" key={tipIndex} />
+        </div>
       </div>
 
       {/* Herramientas para Desarrollador: No renderizar
