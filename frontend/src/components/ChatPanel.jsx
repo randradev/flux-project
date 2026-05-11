@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Brand from './Brand';
 import CreditWidgets from './widgets/CreditWidgets';
 import AccountWidgets from './widgets/AccountWidgets';
+import DapWidgets from './widgets/DapWidgets';
 import WelcomeMessage from './WelcomeMessage';
 import FluxLoadingFeedback from './FluxLoagingFeedback';
 
@@ -118,6 +119,11 @@ export default function ChatPanel({
         />
         {/* Nuevo bloque simétrico */}
         <AccountWidgets
+          conversation={conversation}
+          disabled={sending}
+        />
+        {/* Nuevo bloque simétrico */}
+        <DapWidgets
           conversation={conversation}
           disabled={sending}
         />

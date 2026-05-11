@@ -42,6 +42,27 @@ const CLOSURE_TYPES = {
     title: '👋 Solicitud Cerrada',
     message: 'Has decidido no continuar con la oferta. Puedes volver en cualquier momento.',
     showDownload: false
+  },
+    // DEPÓSITO A PLAZO (DAP)
+  DAP_COMPLETED: {
+    title: '🎊 ¡Inversión Constituida!',
+    message: '¡Excelente decisión! Tu Depósito a Plazo ya está trabajando para ti. Tu contrato está disponible para descarga.',
+    showDownload: true
+  },
+  DAP_REJECTED_POLICY: {
+    title: '😅 No elegible para inversión',
+    message: 'En este momento no pudimos procesar tu depósito. ¡Inténtalo más adelante!',
+    showDownload: false
+  },
+  DAP_SECURITY_BLOCK: {
+    title: '🔒 Bloqueo de Seguridad',
+    message: 'Tuvimos que pausar la solicitud por seguridad. Por favor, contacta soporte para continuar.',
+    showDownload: false
+  },
+  DAP_CLOSED_BY_USER: {
+    title: '👋 Solicitud Cerrada',
+    message: 'Has decidido no continuar con la inversión. Estaremos aquí cuando quieras volver.',
+    showDownload: false
   }
 };
 
@@ -53,14 +74,16 @@ export default function FlowClosure({ conversation }) {
   // 2. DETECTAR PRODUCTO (La clave de la simetría)
   const isLoan = currentNode?.startsWith('LOAN_');
   const isAccount = currentNode?.startsWith('ACCOUNT_');
-  const productKey = isLoan ? 'loan' : (isAccount ? 'account' : null);
+  const isDap = currentNode?.startsWith('DAP_');
+
+  const productKey = isLoan ? 'loan' : (isAccount ? 'account' : (isDap ? 'dap' : null));
 
   // 3. OBTENER DATA DINÁMICA
   const offerData = productKey ? (conversation?.offerData?.[productKey] || {}) : {};
 
   // 4. LÓGICA DE DESCARGA AGNOSTICA
   // Se activa si el nodo es el de "COMPLETED" de cualquier producto
-  const isSuccess = currentNode === 'LOAN_COMPLETED' || currentNode === 'ACCOUNT_COMPLETED';
+  const isSuccess = currentNode === 'LOAN_COMPLETED' || currentNode === 'ACCOUNT_COMPLETED' || currentNode === 'DAP_COMPLETED';
 
   const downloadUrl = (config.showDownload && isSuccess) 
     ? (offerData.file_contrato_path || offerData.display_data?.download_url)

@@ -141,6 +141,9 @@ class DapEngine:
             return {
                 "status_proceso":       "PRE_APPROVED",
                 "is_elegible":          True,
+                "monto":                monto,    
+                "plazo":                plazo,    
+                "moneda":               moneda,   
                 "conversion_rate_used": conversion_rate,
                 "ipc_applied":          ipc_aplicado,
                 "term_premium":         term_premium,

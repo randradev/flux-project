@@ -30,6 +30,9 @@ class CompletedStep:
     # ACCOUNT
     ACCOUNT_EVALUATION_SUCCESS  = "ACCOUNT_EVALUATION_SUCCESS"   # Motor aprobó
     ACCOUNT_EVALUATION_REJECTED = "ACCOUNT_EVALUATION_REJECTED"  # Motor rechazó
+    # DAP
+    DAP_INVESTMENT_SUCCESS  = "DAP_INVESTMENT_SUCCESS"   # Motor calculó y aprobó
+    DAP_INVESTMENT_REJECTED = "DAP_INVESTMENT_REJECTED"  # Motor calculó y rechazó
 
     # ── Formalización (NUEVOS) ────────────────────────────────
     # LOAN
@@ -40,6 +43,10 @@ class CompletedStep:
     ACCOUNT_PRE_APPROVED          = "ACCOUNT_PRE_APPROVED"         # Usuario aceptó
     ACCOUNT_OTP_SUCCESS           = "ACCOUNT_OTP_SUCCESS"          # OTP validado
     ACCOUNT_FORMALIZATION_SUCCESS = "ACCOUNT_FORMALIZATION_SUCCESS" # Contrato sellado
+    # DAP
+    DAP_PRE_APPROVED          = "DAP_PRE_APPROVED"         # Usuario aceptó
+    DAP_OTP_SUCCESS           = "DAP_OTP_SUCCESS"          # OTP validado
+    DAP_FORMALIZATION_SUCCESS = "DAP_FORMALIZATION_SUCCESS" # Contrato sellado
 
     # ── Excepciones (NUEVOS) ──────────────────────────────────
     # LOAN
@@ -48,6 +55,9 @@ class CompletedStep:
     # ACCOUNT
     ACCOUNT_SECURITY_BLOCK  = "ACCOUNT_SECURITY_BLOCK"   # 3 intentos OTP fallidos
     ACCOUNT_CLOSED_BY_USER  = "ACCOUNT_CLOSED_BY_USER"   # Usuario rechazó la oferta
+    # DAP
+    DAP_SECURITY_BLOCK  = "DAP_SECURITY_BLOCK"   # 3 intentos OTP fallidos
+    DAP_CLOSED_BY_USER  = "DAP_CLOSED_BY_USER"   # Usuario rechazó la oferta
 
 
 class ProductPrefix:

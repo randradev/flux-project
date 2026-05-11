@@ -42,7 +42,18 @@ export const NODE_ALIASES = {
   account_completed: 'ACCOUNT_COMPLETED',
   account_rejected_policy: 'ACCOUNT_REJECTED_POLICY',
   account_security_block: 'ACCOUNT_SECURITY_BLOCK',
-  account_closed_by_user: 'ACCOUNT_CLOSED_BY_USER'
+  account_closed_by_user: 'ACCOUNT_CLOSED_BY_USER',
+    // Depósito a Plazo (DAP)
+  dap_init: 'DAP_INIT',
+  dap_collect_data: 'DAP_COLLECT_DATA',
+  dap_investment_engine: 'DAP_INVESTMENT_ENGINE',
+  dap_pre_approved: 'DAP_PRE_APPROVED',
+  dap_otp_validation: 'DAP_OTP_VALIDATION',
+  dap_formalization: 'DAP_FORMALIZATION',
+  dap_completed: 'DAP_COMPLETED',
+  dap_rejected_policy: 'DAP_REJECTED_POLICY',
+  dap_security_block: 'DAP_SECURITY_BLOCK',
+  dap_closed_by_user: 'DAP_CLOSED_BY_USER'
 };
 
 export const NODE_DETAILS = {
@@ -156,7 +167,49 @@ export const NODE_DETAILS = {
   ACCOUNT_CLOSED_BY_USER: {
     label: 'Solicitud Cerrada',
     description: 'Has decidido no avanzar con la oferta por ahora.'
+  },
+  // DEPÓSITO A PLAZO
+  DAP_INIT: {
+    label: 'Inicio Inversión',
+    description: 'Flux te da la bienvenida al flujo de Depósito a Plazo.'
+  },
+  DAP_COLLECT_DATA: {
+    label: 'Datos de Inversión',
+    description: 'Definimos el monto, plazo y moneda de tu depósito.'
+  },
+  DAP_INVESTMENT_ENGINE: {
+    label: 'Motor de Inversión',
+    description: 'Calculamos tu rentabilidad proyectada con las mejores tasas.'
+  },
+  DAP_PRE_APPROVED: {
+    label: 'Oferta Transparente',
+    description: 'Revisa cuánto ganarás y decide si quieres invertir.'
+  },
+  DAP_OTP_VALIDATION: {
+    label: 'Validación de Identidad',
+    description: 'Confirmamos tu identidad para sellar la inversión.'
+  },
+  DAP_FORMALIZATION: {
+    label: 'Generando Contrato',
+    description: 'Estamos preparando el documento legal de tu inversión.'
+  },
+  DAP_COMPLETED: {
+    label: 'Inversión Exitosa',
+    description: '¡Felicidades! Tu inversión ha sido constituida correctamente.'
+  },
+  DAP_REJECTED_POLICY: {
+    label: 'No Elegible',
+    description: 'Lamentablemente no podemos procesar esta inversión por ahora.'
+  },
+  DAP_SECURITY_BLOCK: {
+    label: 'Bloqueo por Seguridad',
+    description: 'Acceso bloqueado tras varios intentos fallidos de validación.'
+  },
+  DAP_CLOSED_BY_USER: {
+    label: 'Solicitud Cerrada',
+    description: 'Has decidido no avanzar con esta inversión por ahora.'
   }
+
 };
 
 export const PHASE_ONE_STEPS = [
@@ -305,9 +358,68 @@ export const PRODUCT_STEPS = {
       hidden: true,
       terminal: true
     }
+  ],
+  // DEPÓSITO A PLAZO
+    DAP: [
+    { 
+      id: 'DAP_INIT', 
+      label: 'Inicio', 
+      description: 'Creación de la solicitud.', 
+      hidden: true 
+    },
+    { 
+      id: 'DAP_COLLECT_DATA', 
+      label: 'Datos', 
+      description: 'Monto y plazo.' 
+    },
+    { 
+      id: 'DAP_INVESTMENT_ENGINE', 
+      label: 'Evaluación', 
+      description: 'Cálculo de rentabilidad.' 
+    },
+    { 
+      id: 'DAP_PRE_APPROVED', 
+      label: 'Oferta', 
+      description: 'Revisión y decisión.' 
+    },
+    { 
+      id: 'DAP_OTP_VALIDATION', 
+      label: 'OTP', 
+      description: 'Validación de identidad.' 
+    },
+    { 
+      id: 'DAP_FORMALIZATION', 
+      label: 'Contrato', 
+      description: 'Formalización digital.' 
+    },
+    { 
+      id: 'DAP_COMPLETED', 
+      label: 'Completado', 
+      description: 'Inversión constituida.', 
+      terminal: true 
+    },
+    { 
+      id: 'DAP_REJECTED_POLICY', 
+      label: 'Rechazo', 
+      description: 'Cierre por política.', 
+      hidden: true, 
+      terminal: true 
+    },
+    { 
+      id: 'DAP_SECURITY_BLOCK', 
+      label: 'Bloqueo', 
+      description: 'Cierre por seguridad.', 
+      hidden: true, 
+      terminal: true 
+    },
+    { 
+      id: 'DAP_CLOSED_BY_USER', 
+      label: 'Cerrado', 
+      description: 'Cierre voluntario.', 
+      hidden: true, 
+      terminal: true 
+    }
   ]
-
-
 };
 
 const FINAL_NODE_IDS = new Set([
@@ -329,6 +441,13 @@ const ACCOUNT_TERMINAL_NODES = new Set([
   'ACCOUNT_REJECTED_POLICY',
   'ACCOUNT_SECURITY_BLOCK',
   'ACCOUNT_CLOSED_BY_USER'
+]);
+
+const DAP_TERMINAL_NODES = new Set([
+  'DAP_COMPLETED',
+  'DAP_REJECTED_POLICY',
+  'DAP_SECURITY_BLOCK',
+  'DAP_CLOSED_BY_USER'
 ]);
 
 export function normalizeNodeId(nodeId) {

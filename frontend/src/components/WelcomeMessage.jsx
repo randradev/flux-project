@@ -2,9 +2,9 @@ import React from 'react';
 
 export default function WelcomeMessage({ onSelect }) {
   const actions = [
-    { id: 'LOAN', label: 'Pedir mi Crédito', icon: '💰', desc: 'Plata en tu cuenta en minutos.' },
-    { id: 'ACCOUNT', label: 'Abrir Cuenta', icon: '🏦', desc: 'Sin comisiones, 100% digital.' },
-    { id: 'DAP', label: 'Hacer crecer mi plata', icon: '📈', desc: 'Invierte fácil y seguro.' },
+    { id: 'Quiero pedir un crédito de consumo', label: 'Pedir mi Crédito', icon: '💰', desc: 'Plata en tu cuenta en minutos.' },
+    { id: 'Quiero abrir una cuenta corriente', label: 'Abrir Cuenta', icon: '🏦', desc: 'Sin comisiones, 100% digital.' },
+    { id: 'Quiero hacer un depósito a plazo', label: 'Hacer crecer mi plata', icon: '📈', desc: 'Invierte fácil y seguro.' },
   ];
 
   return (
