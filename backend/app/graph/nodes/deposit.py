@@ -69,7 +69,7 @@ RESTRICCIONES CRÍTICAS:
 """
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
-# ── PROMPTS DE EXTRACCIÓN EN NODOS COLLECTING ────────────────────────────────────────────
+# ── PROMPTS DE EXTRACCIÓN EN NODOS COLLECT ────────────────────────────────────────────
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
 # ── PROMPT LLAMADA A: EXTRACCIÓN ────────────────────────────────────────────
@@ -323,10 +323,10 @@ def dap_init_node(state: FluxState) -> dict:
             engine_status="PENDING",
         )
 
-    # ── PUNTO DE GUARDADO: current_node → DAP_COLLECTING_DATA ──
+    # ── PUNTO DE GUARDADO: current_node → DAP_COLLECT_DATA ──
     return {
         "messages": [],
-        "session": {**session, "current_node": "DAP_COLLECTING_DATA"},
+        "session": {**session, "current_node": "DAP_COLLECT_DATA"},
         "collecting_data": {
             "dap_params": {},
         },
@@ -338,7 +338,7 @@ def dap_collect_data_node(state: FluxState) -> dict:
     Nodo DAP_COLLECT_DATA: recolección de los parámetros de inversión (monto, plazo, moneda).
     
     ID LangGraph : dap_collect_data
-    current_node : DAP_COLLECTING_DATA
+    current_node : DAP_COLLECT_DATA
     
     ARQUITECTURA INTERNA — DOBLE LLAMADA:
     
@@ -401,7 +401,7 @@ def dap_collect_data_node(state: FluxState) -> dict:
         return {
             "messages":       [AIMessage(content=flux_response.content)],
             "collecting_data": {**collecting, "dap_params": current_params},
-            "session":        {**session, "current_node": "DAP_COLLECTING_DATA"},
+            "session":        {**session, "current_node": "DAP_COLLECT_DATA"},
         }
 
     # 3. ------ LLAMADA A - EXTRACCIÓN ------ 
@@ -472,7 +472,7 @@ def dap_collect_data_node(state: FluxState) -> dict:
     # 6. ------ PREPARAR OUTPUT BASE (siempre presente) ------ 
     output = {
         "collecting_data": {**collecting, "dap_params": updated_params},
-        "session":         {**session, "current_node": "DAP_COLLECTING_DATA"},
+        "session":         {**session, "current_node": "DAP_COLLECT_DATA"},
     }
 
     if last_user_msg and extracted and extracted.intencion == "PREGUNTA":
@@ -492,7 +492,7 @@ def dap_collect_data_node(state: FluxState) -> dict:
         if application_id:
             update_application_semaphores(
                 application_id=application_id,
-                current_node_id="DAP_COLLECTING_DATA",
+                current_node_id="DAP_COLLECT_DATA",
                 node_status="SUCCESS",
                 engine_status="PENDING",
             )
@@ -509,7 +509,7 @@ def dap_collect_data_node(state: FluxState) -> dict:
             **output["session"],
             "progress":           updated_progress,
             "just_completed_step": CompletedStep.DAP_DATA,
-            # current_node ya está en "DAP_COLLECTING_DATA" desde output base
+            # current_node ya está en "DAP_COLLECT_DATA" desde output base
         }
         return output  # Sin mensajes: la arista condicional saltará a dap_investment_engine
     
@@ -855,6 +855,7 @@ def dap_pre_approved_node(state: FluxState) -> dict:
         "dap": {
             "monto":                f"${monto_invertido:,.0f}",
             "moneda":               f"{engine_result.get('moneda', 'CLP')}",
+            "plazo":                f"{engine_result.get('plazo', 0)} días",
             "estimated_gain":       f"${ganancia_estimada:,.2f}",
             "total_return":         f"${total_a_recibir:,.2f}",
             "period_rate":          f"{engine_result.get('period_rate', 0.0) * 100:.3f}%",
@@ -1539,7 +1540,7 @@ def _get_missing_params_fields(params: dict) -> list[str]:
     
     return missing
 
-# ── Construir el contexto para la Llamada B (generador) para nodo DAP_COLLECTING_DATA ──────────────
+# ── Construir el contexto para la Llamada B (generador) para nodo DAP_COLLECT_DATA ──────────────
 def _build_params_generation_context(
     nombre: str,
     intencion: str,

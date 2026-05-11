@@ -56,7 +56,7 @@ _RESUME_MAP = {
     
     # Depósito a Plazo
     "DAP_INIT":                    "dap_init",
-    "DAP_COLLECTING_DATA":         "dap_collect_data",
+    "DAP_COLLECT_DATA":            "dap_collect_data",
     # Depósito a Plazo — Evaluación y Oferta
     "DAP_PRE_APPROVED":            "dap_pre_approved",
     "DAP_OTP_VALIDATION":          "dap_otp_validation",

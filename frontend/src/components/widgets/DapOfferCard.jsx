@@ -4,6 +4,9 @@ import React from 'react';
 function formatMoney(value, currency = 'CLP') {
   if (value === null || value === undefined || value === '') return 'Pendiente';
   
+  // SI YA VIENE FORMATEADO DESDE EL BACKEND, LO DEJAMOS PASAR
+  if (typeof value === 'string' && (value.includes('$') || value.includes('US$'))) return value;
+
   const options = {
     style: 'currency',
     currency: currency,
@@ -14,19 +17,25 @@ function formatMoney(value, currency = 'CLP') {
 }
 
 function formatPercent(value) {
-  if (!value) return '0%';
-  return (value * 100).toFixed(2) + '%';
+  if (value === null || value === undefined || value === '') return '0%';
+  
+  // SI YA VIENE FORMATEADO CON EL SIGNO %, LO DEJAMOS PASAR
+  if (typeof value === 'string' && value.includes('%')) return value;
+  
+  return (Number(value) * 100).toFixed(2) + '%';
 }
 
 // 2. Extractor de datos (Namespace DAP)
 function readDapResult(conversation) {
+  const state = conversation?.state ?? conversation ?? {};
   return (
-    conversation?.transparencyData?.dap ??
-    conversation?.evaluationResults?.dap_engine ??
-    conversation?.offerData?.dap ??
+    state.transparency_data?.dap ??
+    state.transparencyData?.dap ?? 
+    state.evaluation_results?.dap_engine ??
     {}
   );
 }
+
 
 export default function DapOfferCard({ conversation, disabled, onAccept, onReject }) {
   const result = readDapResult(conversation);
@@ -34,11 +43,11 @@ export default function DapOfferCard({ conversation, disabled, onAccept, onRejec
   
   // Mapeo específico para Inversión
   const details = [
-    ['Monto Invertido', formatMoney(result.monto, moneda)],
-    ['Plazo', `${result.plazo ?? 0} días`],
-    ['Tasa Mensual', formatPercent(result.monthly_rate_total)],
+    ['Monto Invertido',  formatMoney(result.monto, moneda)],
+    ['Plazo',            result.plazo ?? 'Pendiente'], // Quitamos el "días" extra de aquí porque ya viene del backend
+    ['Tasa del Periodo', formatPercent(result.period_rate)], // Usamos period_rate que es la que envías
     ['Ganancia Estimada', formatMoney(result.estimated_gain, moneda)],
-    ['Total a Recibir', formatMoney(result.total_return, moneda)]
+    ['Total a Recibir',   formatMoney(result.total_return, moneda)]
   ];
 
   return (
