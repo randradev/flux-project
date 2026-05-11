@@ -14,6 +14,15 @@ export default function WelcomeMessage({ onSelect }) {
           <div className="brand-accent-line"></div>
           <h1>¡Hola! Soy Flux</h1>
           <p>Tu dinero, en lenguaje humano. Olvídate de la burocracia, <strong>estoy aquí para devolverte el control.</strong></p>
+          {/* --- AÑADE ESTA LÍNEA AQUÍ --- */}
+          <p style={{ 
+            color: '#FF7A00', 
+            fontWeight: '600', 
+            marginTop: '10px',
+            fontSize: '1.1rem' 
+          }}>
+            Pregunta con confianza... ¿por dónde empezamos hoy?
+          </p>
         </header>
 
         <div className="quick-actions-grid">

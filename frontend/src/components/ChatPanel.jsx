@@ -92,9 +92,12 @@ export default function ChatPanel({
         )}
 
         {loadingMessages && (
-          <section className="loading-inline">
-            <p>Cargando mensajes persistidos...</p>
-          </section>
+          <div className="skeleton-container" aria-hidden="true">
+            <div className="skeleton-bubble user" style={{ width: '40%' }} />
+            <div className="skeleton-bubble assistant" />
+            <div className="skeleton-bubble user" style={{ width: '70%' }} />
+            <div className="skeleton-bubble assistant" style={{ width: '50%' }} />
+          </div>
         )}
 
         
@@ -135,17 +138,19 @@ export default function ChatPanel({
         )}
       </div>
 
-      <form className="composer" onSubmit={handleSubmit}>
-        <input
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          placeholder="Escribe un mensaje para FLUX..."
-          disabled={sending}
-        />
-        <button className="primary-button composer-button" type="submit" disabled={sending}>
-          {sending ? 'Enviando...' : 'Enviar'}
-        </button>
-      </form>
+      {!!conversation?.messages?.length && (
+        <form className="composer" onSubmit={handleSubmit}>
+          <input
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            placeholder="Escribe un mensaje para FLUX..."
+            disabled={sending}
+          />
+          <button className="primary-button composer-button" type="submit" disabled={sending}>
+            {sending ? 'Enviando...' : 'Enviar'}
+          </button>
+        </form>
+      )}
     </section>
   );
 }

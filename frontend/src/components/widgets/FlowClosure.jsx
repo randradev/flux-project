@@ -106,14 +106,14 @@ export default function FlowClosure({ conversation }) {
               textDecoration: 'none', 
               display: 'inline-block', 
               padding: '12px 24px',
-              backgroundColor: '#007bff',
+              backgroundColor: '#FF7A00',
               color: 'white',
               borderRadius: '8px',
               fontWeight: 'bold',
               boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
             }}
           >
-            📥 Descargar Contrato (PDF)
+            📥 Descargar Contrato
           </a>
         </div>
       )}
