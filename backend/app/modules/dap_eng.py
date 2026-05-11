@@ -43,6 +43,8 @@ MONTO_MINIMO_CLP     = 50_000
 MONTO_MAXIMO_CLP     = 50_000_000
 
 PLAZOS_VALIDOS       = {7, 14, 30, 180, 360}
+PLAZO_MIN_DIAS       = 7
+PLAZO_MAX_DIAS       = 360
 
 MONEDAS_VALIDAS      = {"CLP", "UF", "USD"}
 
@@ -113,8 +115,8 @@ class DapEngine:
             if moneda not in MONEDAS_VALIDAS:
                 raise EngineCalculationError(f"Moneda no reconocida: '{moneda}'. Valores válidos: {MONEDAS_VALIDAS}")
 
-            if plazo not in PLAZOS_VALIDOS:
-                raise EngineCalculationError(f"Plazo no reconocido: {plazo}. Valores válidos: {PLAZOS_VALIDOS}")
+            if plazo < PLAZO_MIN_DIAS or plazo > PLAZO_MAX_DIAS:
+                raise PolicyRejectionError("ERR_FUERA_PLAZO")
 
             # 2. Conversión a CLP para validación de rango (puede lanzar EngineCalculationError)
             monto_clp, conversion_rate = DapEngine._convertir_a_clp(monto, moneda)

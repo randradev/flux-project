@@ -301,19 +301,6 @@ def dap_init_node(state: FluxState) -> dict:
             "session": {**session, "current_node": "DAP_INIT"},
         }
 
-    # ── Llamada Tipo B: Bienvenida dinámica al Depósito a Plazo ────────
-    init_context = (
-        f"Usuario: {first_name}, {edad} años.\n"
-        f"Genera la bienvenida al proceso de Depósito a Plazo."
-    )
-    
-    from langchain_core.messages import SystemMessage, HumanMessage
-    flux_response = _flux_generator.invoke([
-        SystemMessage(content=SYSTEM_PROMPT_INIT_DAP),
-        HumanMessage(content=init_context),
-    ])
-    msg = normalize_llm_response(flux_response.content)
-
     # ── Semáforo ──────────────────────────────────────────────
     if application_id:
         update_application_semaphores(
@@ -1272,6 +1259,7 @@ _REJECTION_MESSAGES = {
     "ERR_EDAD":           "lamentablemente necesitas ser mayor de 18 años para realizar inversiones con nosotros",
     "ERR_MONTO_MIN":      "el monto que quieres invertir está por debajo del mínimo permitido para este producto (50.000 CLP o su equivalente)",
     "ERR_MONTO_MAX":      "el monto ingresado supera el límite máximo de inversión permitido por operación (50.000.000 CLP o su equivalente)",
+    "ERR_FUERA_PLAZO": "el plazo que elegiste no está dentro de nuestro rango permitido (mínimo 7 días y máximo 1 año)",
 }
 
 def dap_rejected_policy_node(state: FluxState) -> dict:
