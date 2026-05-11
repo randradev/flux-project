@@ -1260,6 +1260,248 @@ def dap_completed_node(state: FluxState) -> dict:
     }
 
 # ======================================================================================================
+# NODOS MANEJO DE ERRORES Y EXCEPCIONES
+# ======================================================================================================
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DAP_REJECTED_POLICY — Rechazo por Política de Depósito a Plazo
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+_REJECTION_MESSAGES = {
+    "ERR_EDAD":           "lamentablemente necesitas ser mayor de 18 años para realizar inversiones con nosotros",
+    "ERR_MONTO_MIN":      "el monto que quieres invertir está por debajo del mínimo permitido para este producto (50.000 CLP o su equivalente)",
+    "ERR_MONTO_MAX":      "el monto ingresado supera el límite máximo de inversión permitido por operación (50.000.000 CLP o su equivalente)",
+}
+
+def dap_rejected_policy_node(state: FluxState) -> dict:
+    """
+    Nodo de Rechazo por Política: Entrega la noticia con empatía vía LLM.
+    """
+    print("--- NODO: DAP_REJECTED_POLICY ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN ------
+    session   = state.get("session", {})
+    prep_data = state.get("preparation_data", {})
+    engine    = state.get("evaluation_results", {}).get("dap_engine", {})
+    
+    nombre    = prep_data.get("nombre", "Cliente").split()[0]
+    motivo    = engine.get("motivo_rechazo", "ERR_MONTO_MIN")
+    
+    # 2. ------ GENERACIÓN DE MENSAJE EMPÁTICO ------
+    razon_tecnica = _REJECTION_MESSAGES.get(motivo, "no cumplimos con los filtros mínimos de riesgo")
+    
+    # Identidad de marca mucho más definida
+    system_identity = (
+        "Eres Flux, un asistente bancario joven, optimista y directo. "
+        "Tu estilo es chileno coloquial pero profesional (usas palabras como 'pucha', 'fome', 'dale', 'buenazo'). "
+        "Eres breve, vas al grano y evitas sonar condescendiente o melancólico."
+    )
+    
+    instruction = (
+        f"Hola Flux. Cuéntale a {nombre} que su solicitud de depósito a plazo NO pasó esta vez. "
+        f"La razón es: {razon_tecnica}. "
+        f"Sé súper breve (máximo 2 párrafos cortos). No pidas perdón ni suenes triste, "
+        f"dilo de forma optimista, como una pausa y no un rechazo eterno. "
+        f"¡Mantén la energía arriba!"
+    )
+    
+    response = _flux_generator.invoke([
+        {"role": "system", "content": system_identity},
+        {"role": "user",   "content": instruction}
+    ])
+    mensaje_final = normalize_llm_response(response.content)
+
+
+    # 3. ------ PERSISTENCIA Y SEMÁFOROS ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="DAP_REJECTED_POLICY",
+            node_status="SUCCESS", # El proceso de rechazo se ejecutó bien
+            engine_status="COMPLETED"
+        )
+
+    # 4. ------ SALIDA ------
+    return {
+        "session": {
+            **session,
+            "current_node": "DAP_REJECTED_POLICY",
+            "just_completed_step": None # Nodo terminal
+        },
+        "flow_result": {
+            "status_code":  "REJECTED",
+            "close_reason": motivo,
+            "product_name": "Depósito a Plazo",
+            "closed_at":    _dt.datetime.utcnow().isoformat(),
+        },
+        "offer_data": {
+            **state.get("offer_data", {}),
+            "dap": {
+                **state.get("offer_data", {}).get("dap", {}),
+                "display_data": {
+                    "reason": razon_tecnica,
+                    "download_url": None
+                }
+            }
+        },
+        "messages": [AIMessage(content=mensaje_final)]
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DAP_SECURITY_BLOCK — Bloqueo por Múltiples Intentos OTP Fallidos
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def dap_security_block_node(state: FluxState) -> dict:
+    """
+    Nodo Terminal: Bloqueo de seguridad tras 3 intentos fallidos de OTP.
+    """
+    print("--- NODO: DAP_SECURITY_BLOCK ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    session      = state.get("session", {})
+    user_data    = state.get("user_data", {})
+    auth_control = state.get("auth_control", {})
+    nombre       = state.get("preparation_data", {}).get("nombre", "Cliente").split()[0]
+    user_id      = user_data.get("user_id")
+    now_iso      = _dt.datetime.utcnow().isoformat()
+    
+    # 2. ------ EJECUCIÓN (The Warden) ------
+    # Bloqueo persistente en la DB (usando el nuevo helper)
+    if user_id:
+        block_user_security(user_id)
+        
+    mensaje = (
+        f"🔒 **{nombre}, lo sentimos mucho.**\n\n"
+        f"Hemos detectado múltiples intentos fallidos de validación de identidad. "
+        f"Por tu seguridad, **esta solicitud y tu acceso a Flux han sido bloqueados temporalmente**.\n\n"
+        f"Recibirás un correo electrónico en breve con los pasos necesarios para verificar tu cuenta "
+        f"y recuperar el acceso. Si crees que esto es un error, por favor contáctanos de inmediato."
+    )
+
+    # 3. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="DAP_SECURITY_BLOCK",
+            node_status="BLOCKED", # <--- Estado de semáforo específico
+            engine_status="FAILED"
+        )
+
+    # 4. ------ SALIDA TERMINAL (The End) ------
+    return {
+        "session": {
+            **session,
+            "current_node": "DAP_SECURITY_BLOCK",
+            "just_completed_step": None # Flag terminal
+        },
+        "auth_control": {
+            **auth_control,
+            "security_blocked": True,
+            "block_timestamp":  now_iso,
+            "error_detail": "Máximo de intentos OTP superado."
+        },
+        "flow_result": {
+            "status_code":  "SECURITY_BLOCKED",
+            "close_reason": "OTP_LIMIT_EXCEEDED",
+            "product_name": "Depósito a Plazo",
+            "closed_at":    now_iso,
+        },
+        "messages": [AIMessage(content=mensaje)]
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DAP_CLOSED_BY_USER — Cierre Voluntario (Usuario rechazó la oferta)
+# ──────────────────────────────────────────────────────────────────────────────────────
+
+def dap_closed_by_user_node(state: FluxState) -> dict:
+    """
+    Nodo Terminal: El usuario rechaza formalmente la oferta de Depósito a Plazo.
+    """
+    print("--- NODO: DAP_CLOSED_BY_USER ---")
+    import datetime as _dt
+    
+    # 1. ------ RECOLECCIÓN (The Handshake) ------
+    session      = state.get("session", {})
+    prep_data    = state.get("preparation_data", {})
+    engine       = state.get("evaluation_results", {}).get("dap_engine", {})
+    offer_dap   = state.get("offer_data", {}).get("dap", {})
+    
+    nombre       = prep_data.get("nombre", "Cliente").split()[0]
+    monto_final = engine.get("total_return", 0.0)
+    moneda      = engine.get("moneda", "CLP")
+    now_iso      = _dt.datetime.utcnow().isoformat()
+
+    # 2. ------ GENERACIÓN DE MENSAJE (The Farewell) ------
+    # Usamos LLM para una despedida personalizada y cálida (Toque Flux)
+    system_identity = (
+        "Eres Flux, un asistente bancario joven, optimista y directo. "
+        "Tu estilo es chileno coloquial pero profesional ('dale', 'buenazo', 'no te preocupes')."
+    )
+    
+    instruction = (
+        f"Hola Flux. El usuario {nombre} acaba de rechazar nuestra oferta de depósito a plazo de {monto_final} {moneda}. "
+        f"Despídete de forma muy breve (máximo 2 líneas), dile que no hay drama "
+        f"y que aquí estarás cuando lo necesite. Sé buena onda y relajado."
+    )
+    response = _flux_generator.invoke([
+        {"role": "system", "content": system_identity},
+        {"role": "user",   "content": instruction}
+    ])
+    mensaje_final = normalize_llm_response(response.content)
+
+    # 3. ------ PERSISTENCIA HISTÓRICA (The Progress Tracker) ------
+    current_progress = session.get("progress", {})
+    dap_progress = current_progress.get("dap", {})
+    updated_progress = {
+        **current_progress,
+        "dap": {**dap_progress, "user_rejected_offer": True}
+    }
+
+    # 4. ------ AUDITORÍA (The Auditor) ------
+    application_id = session.get("application_id")
+    if application_id:
+        update_application_semaphores(
+            application_id=application_id,
+            current_node_id="DAP_CLOSED_BY_USER",
+            node_status="REJECTED_BY_USER",
+            engine_status="SUCCESS"
+        )
+
+    # 5. ------ SALIDA (The Final State) ------
+    return {
+        "session": {
+            **session,
+            "current_node": "DAP_CLOSED_BY_USER",
+            "previous_node": session.get("current_node"),
+            "progress": updated_progress,
+            "just_completed_step": None # Flag terminal
+        },
+        "flow_result": {
+            "status_code":  "CLOSED_BY_USER",
+            "close_reason": "USER_REJECTED_OFFER",
+            "product_name": "Depósito a Plazo",
+            "closed_at":    now_iso,
+        },
+        "offer_data": {
+            **state.get("offer_data", {}),
+            "dap": {
+                **offer_dap,
+                "display_data": {
+                    **offer_dap.get("display_data", {}),
+                    "reason": "USER_REJECTED_OFFER",
+                    "main_detail": f"Monto ofrecido: {monto_final} {moneda}",
+                    "download_url": None
+                }
+            }
+        },
+        "messages": [AIMessage(content=mensaje_final)]
+    }
+
+# ======================================================================================================
 # HELPERS DEL FLUJO DE DAP
 # ======================================================================================================
 
