@@ -58,6 +58,17 @@ _NODE_LABELS: dict[str, dict] = {
     "ACCOUNT_REJECTED_POLICY":    {"label": "No elegible",         "progress": 100},
     "ACCOUNT_SECURITY_BLOCK":     {"label": "Bloqueo seguridad",   "progress": 100},
     "ACCOUNT_CLOSED_BY_USER":     {"label": "Solicitud cerrada",   "progress": 100},
+    # Depósito a Plazo (DAP)
+    "DAP_INIT":                  {"label": "Inicio inversión",    "progress": 10},
+    "DAP_COLLECT_DATA":          {"label": "Datos de inversión",  "progress": 30},
+    "DAP_INVESTMENT_ENGINE":     {"label": "Motor de inversión",  "progress": 55},
+    "DAP_PRE_APPROVED":          {"label": "Oferta de inversión", "progress": 70},
+    "DAP_OTP_VALIDATION":        {"label": "Validación identidad", "progress": 85},
+    "DAP_FORMALIZATION":         {"label": "Generando contrato",  "progress": 95},
+    "DAP_COMPLETED":             {"label": "Inversión activada",  "progress": 100},
+    "DAP_REJECTED_POLICY":       {"label": "No elegible",         "progress": 100},
+    "DAP_SECURITY_BLOCK":        {"label": "Bloqueo seguridad",   "progress": 100},
+    "DAP_CLOSED_BY_USER":        {"label": "Solicitud cerrada",   "progress": 100},
 }
 
 def enrich_payload_with_labels(payload: dict) -> dict:
@@ -75,6 +86,7 @@ _ENGINE_NODES = {
     "DAP_INVESTMENT_ENGINE",
     "LOAN_FORMALIZATION",
     "ACCOUNT_FORMALIZATION",
+    "DAP_FORMALIZATION",
 }
 
 # ── Extractor dinámico de namespaces ───────────────────────────────
@@ -115,6 +127,18 @@ DIRECT_ACTION_RULES = {
             "node": "ACCOUNT_CLOSED_BY_USER",
             "progress_flag": "closed_by_user",
             "completion_step": "ACCOUNT_CLOSED_BY_USER"
+        }
+    },
+    "DAP": {
+        "ACCEPT_OFFER": {
+            "node": "DAP_OTP_VALIDATION",
+            "progress_flag": "pre_approval_accepted",
+            "completion_step": "DAP_PRE_APPROVED"
+        },
+        "REJECT_OFFER": {
+            "node": "DAP_CLOSED_BY_USER",
+            "progress_flag": "closed_by_user",
+            "completion_step": "DAP_CLOSED_BY_USER"
         }
     }
 }
