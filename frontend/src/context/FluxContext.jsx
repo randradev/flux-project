@@ -248,21 +248,19 @@ export function FluxProvider({ accessToken, children }) {
     refreshHistory();
   }, [accessToken]);
 
+  // ── AUTO-SELECCIÓN INICIAL ──
+  // Solo queremos auto-seleccionar la primera conversación al CARGAR la app, 
+  // no cada vez que el usuario elige "Nueva Conversación".
+  const hasAutoSelected = React.useRef(false); // Necesitas importar useRef o usar React.useRef
   useEffect(() => {
-    // Si ya tenemos un ID seleccionado que NO es el draft, NO TOCAMOS NADA.
-    // Esto evita que el polling nos resetee el ID a mitad de una conversación.
-    if (selectedConversationId && selectedConversationId !== DRAFT_ID) {
-      return;
+    // Si ya auto-seleccionamos una vez, o si el usuario ya eligió algo, no hacemos nada.
+    if (hasAutoSelected.current || conversations.length === 0) return;
+    // Solo al inicio, si estamos en el estado inicial, cargamos la última conversación
+    if (selectedConversationId === DRAFT_ID) {
+      setSelectedConversationId(conversations[0].id);
+      hasAutoSelected.current = true;
     }
-    // Si estamos en DRAFT y hay conversaciones, seleccionamos la primera
-    if (!selectedConversationId || selectedConversationId === DRAFT_ID) {
-        if (conversations.length > 0) {
-            setSelectedConversationId(conversations[0].id);
-            return;
-        }
-        setSelectedConversationId(DRAFT_ID);
-    }
-  }, [conversations, selectedConversationId]);
+  }, [conversations]);
 
   function mergeHistory(nextItems) {
     setConversations((current) => {
@@ -311,8 +309,12 @@ export function FluxProvider({ accessToken, children }) {
           merged.unshift(existing);
         }
       }
-
-      return merged;
+      
+      const localOnly = current.filter(c => 
+        c.id !== DRAFT_ID && !merged.find(m => m.id === c.id)
+      );
+      
+      return [...localOnly, ...merged]; // <--- Combinamos ambas
     });
   }
 
@@ -523,31 +525,20 @@ export function FluxProvider({ accessToken, children }) {
   }
 
 
-  async function sendMessage(text, productIntent = null) {
-    const cleanText = text.trim();
+  async function sendMessage(text, productIntent = null, forcedConversationId = undefined) {
+  const cleanText = text.trim();
+  if (!cleanText || !accessToken || sending) {
+    return;
+  }
+  setSending(true);
+  setAppError('');
+  // 2. Lógica de ID Robusta: si mandamos null, forzamos una conversación nueva
+  const baseId = forcedConversationId !== undefined ? forcedConversationId : selectedConversationId;
+  const effectiveId = (baseId && baseId !== DRAFT_ID) ? baseId : null;
+  
+  let activeConversationId = effectiveId || DRAFT_ID;
 
-    if (!cleanText || !accessToken || sending) {
-      return;
-    }
-
-    setSending(true);
-    setAppError('');
-
-    // --- FORZAR EL ID CORRECTO ---
-    // Si tenemos un ID seleccionado que NO es el draft, lo usamos. 
-    // Si no, mandamos null para que el backend cree uno.
-    const effectiveId = (selectedConversationId && selectedConversationId !== DRAFT_ID) 
-      ? selectedConversationId 
-      : null;
-    const payload = {
-      message: text,
-      conversation_id: effectiveId,
-      product_intent: productIntent
-    };
-
-    let activeConversationId = selectedConversationId || DRAFT_ID;
-    
-    appendLocalMessage(activeConversationId, {
+  appendLocalMessage(activeConversationId, {
       id: crypto.randomUUID(),
       role: 'user',
       content: cleanText,
@@ -559,7 +550,7 @@ export function FluxProvider({ accessToken, children }) {
       await streamChat({
         accessToken,
         message: cleanText,
-        conversationId: activeConversationId === DRAFT_ID ? null : activeConversationId,
+        conversationId: effectiveId,
         productIntent: productIntent,
         onOpen: ({ conversationId }) => {
           if (activeConversationId === DRAFT_ID && conversationId) {

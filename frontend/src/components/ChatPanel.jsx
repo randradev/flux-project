@@ -41,10 +41,16 @@ export default function ChatPanel({
     windowRef.current.scrollTop = windowRef.current.scrollHeight;
   }, [conversation?.messages?.length, conversation?.currentNode, sending]);
 
+  // A. Forzar nueva conversación al elegir producto (Línea 44 aprox)
   function handleProductSelect(intent, label) {
-    // Enviamos el intent directamente como mensaje para forzar al backend
-    onSendMessage(intent, intent);
+    // Pasamos null como tercer argumento para forzar la creación de un nuevo hilo en el backend
+    onSendMessage(intent, intent, null);
   }
+  // B. Ocultar WelcomeMessage mientras carga la historia (Línea 87 aprox)
+  // Esto evita que el usuario haga clic en un botón "fantasma" mientras se carga un chat viejo
+  {!conversation?.messages?.length && !loadingMessages && (
+    <WelcomeMessage onSelect={handleProductSelect} />
+  )}
 
 
   function handleSubmit(event) {
@@ -73,21 +79,11 @@ export default function ChatPanel({
         </button>
       </header>
 
-{/*       <div className="chat-status-row">
-        <span className="status-chip">{sending ? 'Streaming SSE activo' : 'Listo para enviar'}</span>
-        <span className="status-chip muted">
-          {conversation?.isDraft ? 'Draft local' : conversation?.id || 'Sin conversation_id'}
-        </span>
-        {conversation?.applicationId && (
-          <span className="status-chip muted">{conversation.applicationId}</span>
-        )}
-      </div> */}
-
       <div ref={windowRef} className="chat-window" aria-live="polite">
-        {!conversation?.messages?.length && (
+        {!conversation?.messages?.length && !loadingMessages && (
           <WelcomeMessage onSelect={handleProductSelect} />
         )}
-      
+
 
         {loadingMessages && (
           <section className="loading-inline">

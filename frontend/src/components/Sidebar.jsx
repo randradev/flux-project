@@ -34,9 +34,6 @@ export default function Sidebar({
       <div className="sidebar-actions">
         <button className="primary-button" type="button" onClick={onNewConversation}>
           Nueva conversacion
-        {/* </button>
-        <button className="secondary-button" type="button" onClick={onRefresh} disabled={loadingHistory}>
-          {loadingHistory ? 'Actualizando...' : 'Recargar historial'} */}
         </button>
       </div>
 
