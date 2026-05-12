@@ -301,19 +301,6 @@ def account_init_node(state: FluxState) -> dict:
             "session": {**session, "current_node": "ACCOUNT_INIT"},
         }
 
-    # ── Llamada Tipo B: Bienvenida dinámica al crédito ────────
-    init_context = (
-        f"Usuario: {first_name}, {edad} años.\n"
-        f"Genera la bienvenida al proceso de Cuenta Corriente."
-    )
-    
-    from langchain_core.messages import SystemMessage, HumanMessage
-    flux_response = _flux_generator.invoke([
-        SystemMessage(content=SYSTEM_PROMPT_INIT_ACCOUNT),
-        HumanMessage(content=init_context),
-    ])
-    msg = normalize_llm_response(flux_response.content)
-
     # ── Semáforo ──────────────────────────────────────────────
     if application_id:
         update_application_semaphores(
