@@ -594,10 +594,10 @@ export function FluxProvider({ accessToken, children }) {
         conversationId: effectiveId,
         productIntent: productIntent,
         onOpen: ({ conversationId }) => {
-          if (activeConversationId === DRAFT_ID && conversationId) {
+          /* if (activeConversationId === DRAFT_ID && conversationId) {
             activeConversationId = conversationId;
             promoteDraftConversation(conversationId);
-          }
+          } */
         },
         onEvent: (event) => {
           if (event.type === 'message') {
@@ -619,9 +619,17 @@ export function FluxProvider({ accessToken, children }) {
 
           if (event.type === 'done') {
             console.log("Finalizando stream para:", event.conversation_id);
+            
+            setConversations(prev => prev.map(c => 
+              c.id === DRAFT_ID ? { ...c, id: event.conversation_id, isDraft: false } : c
+            ));
+            
+            setSelectedConversationId(event.conversation_id);
             setSending(false);
-            // Opcional: refrescar historial en segundo plano para traer el título final del backend
-            refreshHistory(); 
+            // El "truco" para la demo: darle 500ms antes de refrescar la lista lateral
+            setTimeout(() => {
+              refreshHistory();
+            }, 500);
           }
 
           if (event.type === 'error') {

@@ -51,11 +51,11 @@ def send_otp_email(mail: str, code: str):
                 """,
             }
             resend.Emails.send(params)
-            print(f"✅ [REAL] Email enviado a {mail}")
+            print(f"[OK] [REAL] Email enviado a {mail}")
             return True
         except Exception as e:
             # Aquí capturamos el error real de la API (ej: 403 si el mail no es el tuyo)
-            print(f"❌ [API ERROR] Resend falló: {e}")
+            print(f"[ERROR] [API ERROR] Resend falló: {e}")
     
     # 2. Modo MOCK (Respaldo si no hay key o si falló el try anterior)
     print("\n" + "="*40)
